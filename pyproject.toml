@@ -1,13 +1,21 @@
 [project]
 name = "nobleblocks-mcp"
-version = "0.1.0"
-description = "MCP server exposing NobleBlocks paper search to Claude Desktop, ChatGPT, and other AI tools"
+version = "1.0.0"
+description = "MCP server exposing NobleBlocks 290M+ paper search to Claude Desktop, ChatGPT, Cursor, and other AI tools"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "NobleBlocks", email = "support@nobleblocks.com"}]
+keywords = ["mcp", "nobleblocks", "research", "papers", "academic", "search"]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://www.nobleblocks.com"
+Repository = "https://github.com/nobleblocks/nobleblocks-mcp"
+Documentation = "https://www.nobleblocks.com/docs/mcp"
 
 [project.scripts]
 nobleblocks-mcp = "nobleblocks_mcp.server:main"

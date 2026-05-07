@@ -1,0 +1,242 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "NobleBlocks Research API",
+    "description": "Search 290M+ academic papers across PubMed, OpenAlex, SemanticScholar, arXiv, EuropePMC, and Scopus. Generate literature reviews, explore citation networks, and find semantically similar papers.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "NobleBlocks Support",
+      "url": "https://www.nobleblocks.com",
+      "email": "support@nobleblocks.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://www.nobleblocks.com",
+      "description": "NobleBlocks Production API"
+    }
+  ],
+  "paths": {
+    "/api/v1/papers/search": {
+      "get": {
+        "operationId": "searchPapers",
+        "summary": "Search academic papers",
+        "description": "Full-text search across 290M+ papers. Use for finding research on any topic, filtering by year, citations, or source database.",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 2, "maxLength": 500 },
+            "description": "Search query — keywords, phrases, or a natural language research question."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 10, "minimum": 1, "maximum": 50 },
+            "description": "Maximum number of results to return."
+          },
+          {
+            "name": "min_year",
+            "in": "query",
+            "schema": { "type": "integer" },
+            "description": "Earliest publication year (e.g. 2020)."
+          },
+          {
+            "name": "max_year",
+            "in": "query",
+            "schema": { "type": "integer" },
+            "description": "Latest publication year."
+          },
+          {
+            "name": "min_citations",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 0 },
+            "description": "Minimum citation count."
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["pubmed", "openalex", "semanticscholar", "arxiv", "europepmc", "scopus"] },
+            "description": "Restrict results to a specific source database."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["relevance", "date", "citations"], "default": "relevance" },
+            "description": "Sort order for results."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer", "description": "Total matching papers" },
+                    "results": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Paper" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": { "description": "Rate limit exceeded" }
+        }
+      }
+    },
+    "/api/v1/papers/lookup": {
+      "get": {
+        "operationId": "getPaper",
+        "summary": "Get paper by ID",
+        "description": "Fetch full metadata for a single paper by DOI, PMID, arXiv ID, or OpenAlex ID.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 100 },
+            "description": "Paper identifier (DOI, PMID, arXiv ID, OpenAlex ID)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paper metadata",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Paper" }
+              }
+            }
+          },
+          "404": { "description": "Paper not found" }
+        }
+      }
+    },
+    "/api/v1/papers/similar": {
+      "get": {
+        "operationId": "findSimilarPapers",
+        "summary": "Find semantically similar papers",
+        "description": "Vector-based semantic similarity search. Provide a title, abstract, or research question to find conceptually related papers.",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "maxLength": 500 },
+            "description": "Reference text to find similar papers for."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 10, "minimum": 1, "maximum": 30 },
+            "description": "Maximum results."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Similar papers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Paper" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/papers/citation-graph": {
+      "get": {
+        "operationId": "getCitationGraph",
+        "summary": "Get citation network",
+        "description": "Retrieve papers that cite or are cited by a given paper. Useful for understanding impact and finding foundational work.",
+        "parameters": [
+          {
+            "name": "paperId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Paper DOI or ID."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 50 },
+            "description": "Max papers per direction."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Citation graph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "references": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Paper" }
+                    },
+                    "citations": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Paper" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Paper": {
+        "type": "object",
+        "properties": {
+          "paperId": { "type": "string" },
+          "title": { "type": "string" },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" }
+              }
+            }
+          },
+          "year": { "type": "integer" },
+          "abstract": { "type": "string", "description": "Abstract (max 600 chars)" },
+          "DOI": { "type": "string" },
+          "citationCount": { "type": "integer" },
+          "venue": { "type": "string" },
+          "source": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "isOpenAccess": { "type": "boolean" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "NobleBlocks API key. Get one at https://www.nobleblocks.com/settings/api-keys"
+      }
+    }
+  },
+  "security": [
+    { "BearerAuth": [] }
+  ]
+}
