@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "MCP server exposing NobleBlocks 290M+ paper search to Claude Desktop, ChatGPT, Cursor, and other AI tools"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "NobleBlocks", email = "support@nobleblocks.com"}]
+authors = [{name = "NobleBlocks", email = "info@nobleblocks.com"}]
 keywords = ["mcp", "nobleblocks", "research", "papers", "academic", "search"]
 dependencies = [
     "mcp>=1.0.0",

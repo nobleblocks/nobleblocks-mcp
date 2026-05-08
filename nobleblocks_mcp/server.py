@@ -426,7 +426,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         duration = (time.time() - t0) * 1000
         logger.exception("Tool call failed: %s", name)
         audit_log(name, arguments, success=False, duration_ms=duration)
-        return [TextContent(type="text", text="Internal error. Please try again or contact support@nobleblocks.com")]
+        return [TextContent(type="text", text="Internal error. Please try again or contact info@nobleblocks.com")]
 
 
 def _sanitize_args(args: dict[str, Any]) -> dict[str, Any]:

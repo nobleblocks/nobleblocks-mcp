@@ -53,7 +53,7 @@ LIMITATIONS:
 - Auth URL for users to get a key: https://www.nobleblocks.com/settings/api-keys
 
 ## Logo
-Use the NobleBlocks logo from: https://www.nobleblocks.com/logo-square.png
+Use the NobleBlocks logo from: https://www.nobleblocks.com/favicon.png
 
 ## Privacy Policy
 https://www.nobleblocks.com/privacy
@@ -90,8 +90,8 @@ Host at `https://www.nobleblocks.com/.well-known/ai-plugin.json`:
     "type": "openapi",
     "url": "https://www.nobleblocks.com/.well-known/openapi.json"
   },
-  "logo_url": "https://www.nobleblocks.com/logo-square.png",
-  "contact_email": "support@nobleblocks.com",
+  "logo_url": "https://www.nobleblocks.com/favicon.png",
+  "contact_email": "info@nobleblocks.com",
   "legal_info_url": "https://www.nobleblocks.com/terms"
 }
 ```

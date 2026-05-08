@@ -1,7 +1,7 @@
 # NobleBlocks MCP Server
 
 <p align="center">
-  <img src="https://www.nobleblocks.com/logo-square.png" width="80" alt="NobleBlocks" />
+  <img src="https://www.nobleblocks.com/favicon.png" width="80" alt="NobleBlocks" />
 </p>
 
 > Search **290M+ academic papers** from your AI assistant — Claude, ChatGPT, Cursor, VS Code Copilot, and more.
@@ -121,9 +121,6 @@ We also provide a ChatGPT Custom GPT that uses the same API. See [chatgpt/GPT_CO
 ## Development
 
 ```bash
-# Run locally against dev
-NOBLEBLOCKS_API_BASE=https://www.dev.nobleblocks.com nobleblocks-mcp
-
 # Test with MCP Inspector
 npx @modelcontextprotocol/inspector nobleblocks-mcp
 ```
@@ -153,5 +150,5 @@ MIT — see [LICENSE](LICENSE)
 
 - **Website**: [nobleblocks.com](https://www.nobleblocks.com)
 - **API Docs**: [nobleblocks.com/docs/api](https://www.nobleblocks.com/docs/api)
-- **Support**: support@nobleblocks.com
+- **Support**: info@nobleblocks.com
 - **Twitter**: [@nobleblocks](https://x.com/nobleblocks)
