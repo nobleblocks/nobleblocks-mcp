@@ -63,7 +63,20 @@ class NobleBlocksOAuthProvider(
     """OAuth 2.1 provider that authenticates against NobleBlocks user accounts."""
 
     def __init__(self):
-        # In-memory stores (replace with Redis/DB for multi-instance production)
+        # Persistent store (DynamoDB) — survives restarts and works multi-instance.
+        # Falls back to in-memory dicts if DynamoDB is unavailable (local dev).
+        self._use_dynamo = False
+        self._store = None
+        try:
+            from .dynamo_store import DynamoTokenStore, ensure_table_exists
+            ensure_table_exists()
+            self._store = DynamoTokenStore()
+            self._use_dynamo = True
+            logger.info("OAuth token store: DynamoDB")
+        except Exception as e:
+            logger.warning("DynamoDB unavailable, falling back to in-memory: %s", e)
+
+        # In-memory fallback (used if DynamoDB is unavailable)
         self._auth_codes: dict[str, AuthorizationCode] = {}
         self._access_tokens: dict[str, AccessToken] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
@@ -75,22 +88,214 @@ class NobleBlocksOAuthProvider(
         # Pending auth requests (state → params)
         self._pending_auth: dict[str, dict] = {}
 
+    # ── Persistence helpers ──────────────────────────────────────────────────
+
+    def _save_auth_code(self, code_str: str, auth_code: AuthorizationCode):
+        self._auth_codes[code_str] = auth_code
+        if self._use_dynamo:
+            from .dynamo_store import _epoch
+            self._store.put("auth_code", code_str, {
+                "code": auth_code.code,
+                "scopes": auth_code.scopes,
+                "expires_at": auth_code.expires_at.isoformat(),
+                "client_id": auth_code.client_id,
+                "code_challenge": auth_code.code_challenge,
+                "redirect_uri": str(auth_code.redirect_uri) if auth_code.redirect_uri else None,
+                "redirect_uri_provided_explicitly": auth_code.redirect_uri_provided_explicitly,
+                "resource": str(auth_code.resource) if auth_code.resource else None,
+            }, ttl_epoch=_epoch(auth_code.expires_at))
+
+    def _load_auth_code(self, code_str: str) -> AuthorizationCode | None:
+        if code_str in self._auth_codes:
+            return self._auth_codes[code_str]
+        if self._use_dynamo:
+            data = self._store.get("auth_code", code_str)
+            if data:
+                from datetime import datetime
+                from pydantic import AnyHttpUrl
+                ac = AuthorizationCode(
+                    code=data["code"],
+                    scopes=data.get("scopes", []),
+                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                    client_id=data["client_id"],
+                    code_challenge=data.get("code_challenge"),
+                    redirect_uri=AnyHttpUrl(data["redirect_uri"]) if data.get("redirect_uri") else None,
+                    redirect_uri_provided_explicitly=data.get("redirect_uri_provided_explicitly", False),
+                    resource=AnyHttpUrl(data["resource"]) if data.get("resource") else None,
+                )
+                self._auth_codes[code_str] = ac
+                return ac
+        return None
+
+    def _delete_auth_code(self, code_str: str):
+        self._auth_codes.pop(code_str, None)
+        if self._use_dynamo:
+            self._store.delete("auth_code", code_str)
+
+    def _save_access_token(self, token_str: str, access_token: AccessToken):
+        self._access_tokens[token_str] = access_token
+        if self._use_dynamo:
+            from .dynamo_store import _epoch
+            self._store.put("access_token", token_str, {
+                "token": access_token.token,
+                "client_id": access_token.client_id,
+                "scopes": access_token.scopes,
+                "expires_at": access_token.expires_at.isoformat(),
+                "resource": str(access_token.resource) if access_token.resource else None,
+            }, ttl_epoch=_epoch(access_token.expires_at))
+
+    def _load_access_token(self, token_str: str) -> AccessToken | None:
+        if token_str in self._access_tokens:
+            return self._access_tokens[token_str]
+        if self._use_dynamo:
+            data = self._store.get("access_token", token_str)
+            if data:
+                from datetime import datetime
+                from pydantic import AnyHttpUrl
+                at = AccessToken(
+                    token=data["token"],
+                    client_id=data["client_id"],
+                    scopes=data.get("scopes", []),
+                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                    resource=AnyHttpUrl(data["resource"]) if data.get("resource") else None,
+                )
+                self._access_tokens[token_str] = at
+                return at
+        return None
+
+    def _delete_access_token(self, token_str: str):
+        self._access_tokens.pop(token_str, None)
+        if self._use_dynamo:
+            self._store.delete("access_token", token_str)
+
+    def _save_refresh_token(self, token_str: str, refresh_token: RefreshToken):
+        self._refresh_tokens[token_str] = refresh_token
+        if self._use_dynamo:
+            from .dynamo_store import _epoch
+            self._store.put("refresh_token", token_str, {
+                "token": refresh_token.token,
+                "client_id": refresh_token.client_id,
+                "scopes": refresh_token.scopes,
+                "expires_at": refresh_token.expires_at.isoformat(),
+            }, ttl_epoch=_epoch(refresh_token.expires_at))
+
+    def _load_refresh_token(self, token_str: str) -> RefreshToken | None:
+        if token_str in self._refresh_tokens:
+            return self._refresh_tokens[token_str]
+        if self._use_dynamo:
+            data = self._store.get("refresh_token", token_str)
+            if data:
+                from datetime import datetime
+                rt = RefreshToken(
+                    token=data["token"],
+                    client_id=data["client_id"],
+                    scopes=data.get("scopes", []),
+                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                )
+                self._refresh_tokens[token_str] = rt
+                return rt
+        return None
+
+    def _delete_refresh_token(self, token_str: str):
+        self._refresh_tokens.pop(token_str, None)
+        if self._use_dynamo:
+            self._store.delete("refresh_token", token_str)
+
+    def _save_nb_token_mapping(self, map_type: str, key: str, nb_token: str):
+        if map_type == "code":
+            self._code_to_nb_token[key] = nb_token
+        else:
+            self._token_to_nb_token[key] = nb_token
+        if self._use_dynamo:
+            # No TTL — these get cleaned up when the parent token is deleted
+            self._store.put(f"nb_map_{map_type}", key, {"nb_token": nb_token})
+
+    def _load_nb_token_mapping(self, map_type: str, key: str) -> str:
+        local = self._code_to_nb_token if map_type == "code" else self._token_to_nb_token
+        if key in local:
+            return local[key]
+        if self._use_dynamo:
+            data = self._store.get(f"nb_map_{map_type}", key)
+            if data:
+                local[key] = data["nb_token"]
+                return data["nb_token"]
+        return ""
+
+    def _delete_nb_token_mapping(self, map_type: str, key: str):
+        local = self._code_to_nb_token if map_type == "code" else self._token_to_nb_token
+        local.pop(key, None)
+        if self._use_dynamo:
+            self._store.delete(f"nb_map_{map_type}", key)
+
+    def _save_client(self, client_id: str, client_info: OAuthClientInformationFull):
+        self._clients[client_id] = client_info
+        if self._use_dynamo:
+            self._store.put("client", client_id, client_info.model_dump(mode="json"))
+
+    def _load_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        if client_id in self._clients:
+            return self._clients[client_id]
+        if self._use_dynamo:
+            data = self._store.get("client", client_id)
+            if data:
+                ci = OAuthClientInformationFull.model_validate(data)
+                self._clients[client_id] = ci
+                return ci
+        return None
+
+    def _save_pending_auth(self, state: str, data: dict):
+        self._pending_auth[state] = data
+        if self._use_dynamo:
+            ttl = int(time.time()) + AUTH_CODE_TTL
+            # Serialize params for storage
+            stored = {**data}
+            if "params" in stored:
+                p = stored["params"]
+                stored["params"] = {
+                    "state": p.state,
+                    "scopes": p.scopes,
+                    "code_challenge": p.code_challenge,
+                    "redirect_uri": str(p.redirect_uri) if p.redirect_uri else None,
+                    "redirect_uri_provided_explicitly": p.redirect_uri_provided_explicitly,
+                    "resource": str(p.resource) if p.resource else None,
+                }
+            self._store.put("pending_auth", state, stored, ttl_epoch=ttl)
+
+    def _load_and_delete_pending_auth(self, state: str) -> dict | None:
+        data = self._pending_auth.pop(state, None)
+        if not data and self._use_dynamo:
+            data = self._store.get("pending_auth", state)
+            if data and "params" in data and isinstance(data["params"], dict):
+                from pydantic import AnyHttpUrl
+                p = data["params"]
+                data["params"] = AuthorizationParams(
+                    state=p.get("state"),
+                    scopes=p.get("scopes"),
+                    code_challenge=p.get("code_challenge"),
+                    redirect_uri=AnyHttpUrl(p["redirect_uri"]) if p.get("redirect_uri") else None,
+                    redirect_uri_provided_explicitly=p.get("redirect_uri_provided_explicitly", False),
+                    resource=AnyHttpUrl(p["resource"]) if p.get("resource") else None,
+                )
+        if self._use_dynamo:
+            self._store.delete("pending_auth", state)
+        return data
+
     # ── Client Registration ──────────────────────────────────────────────────
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         """Look up a registered client by ID."""
-        return self._clients.get(client_id)
+        return self._load_client(client_id)
 
     async def register_client(
         self, client_info: OAuthClientInformationFull
     ) -> None:
         """Register a new OAuth client (Dynamic Client Registration)."""
-        if client_info.client_id in self._clients:
+        if self._load_client(client_info.client_id):
             raise RegistrationError(
                 error=RegistrationErrorCode.INVALID_CLIENT_METADATA,
                 error_description="Client already registered",
             )
-        self._clients[client_info.client_id] = client_info
+        self._save_client(client_info.client_id, client_info)
         logger.info("Registered OAuth client: %s (%s)", client_info.client_id, client_info.client_name)
 
     # ── Authorization ────────────────────────────────────────────────────────
@@ -114,12 +319,12 @@ class NobleBlocksOAuthProvider(
         auth_state = secrets.token_urlsafe(32)
 
         # Store the pending request
-        self._pending_auth[auth_state] = {
+        self._save_pending_auth(auth_state, {
             "client_id": client.client_id,
             "client_name": client.client_name or "Unknown App",
             "params": params,
             "created_at": time.time(),
-        }
+        })
 
         # Redirect to our consent page
         consent_url = f"{CONSENT_PAGE_URL}?" + urlencode({
@@ -137,7 +342,7 @@ class NobleBlocksOAuthProvider(
         Validates the NB session, issues an auth code, and returns the
         redirect URL back to Claude.
         """
-        pending = self._pending_auth.pop(auth_state, None)
+        pending = self._load_and_delete_pending_auth(auth_state)
         if not pending:
             raise AuthorizeError(
                 error=AuthorizationErrorCode.INVALID_REQUEST,
@@ -171,8 +376,8 @@ class NobleBlocksOAuthProvider(
             resource=params.resource,
         )
 
-        self._auth_codes[code_str] = auth_code
-        self._code_to_nb_token[code_str] = nb_access_token
+        self._save_auth_code(code_str, auth_code)
+        self._save_nb_token_mapping("code", code_str, nb_access_token)
 
         # Build redirect back to Claude
         redirect_url = construct_redirect_uri(
@@ -189,13 +394,13 @@ class NobleBlocksOAuthProvider(
         client: OAuthClientInformationFull,
         authorization_code: str,
     ) -> AuthorizationCode | None:
-        code = self._auth_codes.get(authorization_code)
+        code = self._load_auth_code(authorization_code)
         if code and code.client_id == client.client_id:
             if code.expires_at > datetime.now(timezone.utc):
                 return code
             # Expired — clean up
-            self._auth_codes.pop(authorization_code, None)
-            self._code_to_nb_token.pop(authorization_code, None)
+            self._delete_auth_code(authorization_code)
+            self._delete_nb_token_mapping("code", authorization_code)
         return None
 
     async def exchange_authorization_code(
@@ -206,8 +411,9 @@ class NobleBlocksOAuthProvider(
         code_str = authorization_code.code
 
         # Remove used code (one-time use)
-        self._auth_codes.pop(code_str, None)
-        nb_token = self._code_to_nb_token.pop(code_str, "")
+        self._delete_auth_code(code_str)
+        nb_token = self._load_nb_token_mapping("code", code_str)
+        self._delete_nb_token_mapping("code", code_str)
 
         # Issue access token
         access_token_str = secrets.token_urlsafe(48)
@@ -218,8 +424,8 @@ class NobleBlocksOAuthProvider(
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL),
             resource=authorization_code.resource,
         )
-        self._access_tokens[access_token_str] = access_token
-        self._token_to_nb_token[access_token_str] = nb_token
+        self._save_access_token(access_token_str, access_token)
+        self._save_nb_token_mapping("token", access_token_str, nb_token)
 
         # Issue refresh token
         refresh_token_str = secrets.token_urlsafe(48)
@@ -229,7 +435,7 @@ class NobleBlocksOAuthProvider(
             scopes=authorization_code.scopes,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL),
         )
-        self._refresh_tokens[refresh_token_str] = refresh_token
+        self._save_refresh_token(refresh_token_str, refresh_token)
 
         return OAuthToken(
             access_token=access_token_str,
@@ -246,11 +452,11 @@ class NobleBlocksOAuthProvider(
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        rt = self._refresh_tokens.get(refresh_token)
+        rt = self._load_refresh_token(refresh_token)
         if rt and rt.client_id == client.client_id:
             if rt.expires_at > datetime.now(timezone.utc):
                 return rt
-            self._refresh_tokens.pop(refresh_token, None)
+            self._delete_refresh_token(refresh_token)
         return None
 
     async def exchange_refresh_token(
@@ -260,13 +466,13 @@ class NobleBlocksOAuthProvider(
         scopes: list[str],
     ) -> OAuthToken:
         # Rotate refresh token (revoke old, issue new)
-        self._refresh_tokens.pop(refresh_token.token, None)
+        self._delete_refresh_token(refresh_token.token)
 
         # Find the NB token associated with the old access token for this client
         nb_token = ""
         for at_str, at in list(self._access_tokens.items()):
             if at.client_id == client.client_id:
-                nb_token = self._token_to_nb_token.get(at_str, "")
+                nb_token = self._load_nb_token_mapping("token", at_str)
                 break
 
         # Issue new access token
@@ -277,9 +483,9 @@ class NobleBlocksOAuthProvider(
             scopes=scopes or refresh_token.scopes,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL),
         )
-        self._access_tokens[access_token_str] = access_token
+        self._save_access_token(access_token_str, access_token)
         if nb_token:
-            self._token_to_nb_token[access_token_str] = nb_token
+            self._save_nb_token_mapping("token", access_token_str, nb_token)
 
         # Issue new refresh token
         new_refresh_str = secrets.token_urlsafe(48)
@@ -289,7 +495,7 @@ class NobleBlocksOAuthProvider(
             scopes=scopes or refresh_token.scopes,
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL),
         )
-        self._refresh_tokens[new_refresh_str] = new_refresh
+        self._save_refresh_token(new_refresh_str, new_refresh)
 
         return OAuthToken(
             access_token=access_token_str,
@@ -302,12 +508,12 @@ class NobleBlocksOAuthProvider(
     # ── Token Validation ─────────────────────────────────────────────────────
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        at = self._access_tokens.get(token)
+        at = self._load_access_token(token)
         if at and at.expires_at > datetime.now(timezone.utc):
             return at
         if at:
-            self._access_tokens.pop(token, None)
-            self._token_to_nb_token.pop(token, None)
+            self._delete_access_token(token)
+            self._delete_nb_token_mapping("token", token)
         return None
 
     # ── Revocation ───────────────────────────────────────────────────────────
@@ -316,13 +522,14 @@ class NobleBlocksOAuthProvider(
         self, token: AccessToken | RefreshToken
     ) -> None:
         if isinstance(token, AccessToken):
-            self._access_tokens.pop(token.token, None)
-            self._token_to_nb_token.pop(token.token, None)
+            self._delete_access_token(token.token)
+            self._delete_nb_token_mapping("token", token.token)
         elif isinstance(token, RefreshToken):
-            self._refresh_tokens.pop(token.token, None)
+            self._delete_refresh_token(token.token)
 
     # ── Helper: get NB token for MCP request ─────────────────────────────────
 
     def get_nb_token(self, mcp_access_token: str) -> str | None:
         """Get the NobleBlocks API token associated with an MCP access token."""
-        return self._token_to_nb_token.get(mcp_access_token)
+        t = self._load_nb_token_mapping("token", mcp_access_token)
+        return t if t else None
