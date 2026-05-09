@@ -1,0 +1,24 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY pyproject.toml ./
+COPY nobleblocks_mcp/ nobleblocks_mcp/
+RUN pip install --no-cache-dir .
+
+# Non-root user
+RUN useradd -r -s /bin/false mcpuser
+USER mcpuser
+
+# Environment
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8080
+ENV LOG_LEVEL=INFO
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+
+ENTRYPOINT ["nobleblocks-mcp-remote"]

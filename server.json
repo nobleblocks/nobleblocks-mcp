@@ -7,12 +7,12 @@
     "url": "https://github.com/nobleblocks/nobleblocks-mcp",
     "source": "github"
   },
-  "version": "1.0.1",
+  "version": "2.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "nobleblocks-mcp",
-      "version": "1.0.1",
+      "version": "2.0.0",
       "transport": {
         "type": "stdio"
       },
@@ -24,6 +24,20 @@
           "isSecret": true
         }
       ]
+    }
+  ],
+  "remoteEndpoints": [
+    {
+      "url": "https://mcp.nobleblocks.com/mcp",
+      "transport": {
+        "type": "streamable-http"
+      },
+      "auth": {
+        "type": "oauth2",
+        "authorizationUrl": "https://mcp.nobleblocks.com/authorize",
+        "tokenUrl": "https://mcp.nobleblocks.com/token",
+        "scopes": ["search"]
+      }
     }
   ]
 }
