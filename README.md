@@ -1,5 +1,7 @@
 # NobleBlocks MCP Server
 
+<!-- mcp-name: io.github.nobleblocks/nobleblocks-mcp -->
+
 <p align="center">
   <img src="https://www.nobleblocks.com/favicon.png" width="80" alt="NobleBlocks" />
 </p>

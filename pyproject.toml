@@ -1,6 +1,6 @@
 [project]
 name = "nobleblocks-mcp"
-version = "1.0.0"
+version = "1.0.1"
 description = "MCP server exposing NobleBlocks 290M+ paper search to Claude Desktop, ChatGPT, Cursor, and other AI tools"
 requires-python = ">=3.10"
 license = {text = "MIT"}
