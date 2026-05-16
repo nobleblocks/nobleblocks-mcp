@@ -1,43 +1,45 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.nobleblocks/nobleblocks-mcp",
-  "title": "NobleBlocks Academic Papers",
-  "description": "Search 290M+ academic papers from your AI assistant. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Tools: search papers, find similar, citation graphs, and AI-powered literature reviews.",
-  "repository": {
-    "url": "https://github.com/nobleblocks/nobleblocks-mcp",
-    "source": "github"
-  },
-  "version": "2.0.0",
-  "packages": [
-    {
-      "registryType": "pypi",
-      "identifier": "nobleblocks-mcp",
-      "version": "2.0.0",
-      "transport": {
-        "type": "stdio"
-      },
-      "environmentVariables": [
+    "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+    "name": "io.github.nobleblocks/nobleblocks-mcp",
+    "title": "NobleBlocks Academic Papers",
+    "description": "Search 290M+ academic papers from your AI assistant. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Tools: search papers, find similar, citation graphs, and AI-powered literature reviews.",
+    "repository": {
+        "url": "https://github.com/nobleblocks/nobleblocks-mcp",
+        "source": "github"
+    },
+    "version": "2.0.0",
+    "packages": [
         {
-          "name": "NOBLEBLOCKS_API_KEY",
-          "description": "API key for Pro tier — higher rate limits and literature review generation. Free tier (100 searches/day) works without a key.",
-          "isRequired": false,
-          "isSecret": true
+            "registryType": "pypi",
+            "identifier": "nobleblocks-mcp",
+            "version": "2.0.0",
+            "transport": {
+                "type": "stdio"
+            },
+            "environmentVariables": [
+                {
+                    "name": "NOBLEBLOCKS_API_KEY",
+                    "description": "API key for Pro tier — higher rate limits and literature review generation. Free tier (100 searches/day) works without a key.",
+                    "isRequired": false,
+                    "isSecret": true
+                }
+            ]
         }
-      ]
-    }
-  ],
-  "remoteEndpoints": [
-    {
-      "url": "https://mcp.nobleblocks.com/mcp",
-      "transport": {
-        "type": "streamable-http"
-      },
-      "auth": {
-        "type": "oauth2",
-        "authorizationUrl": "https://mcp.nobleblocks.com/authorize",
-        "tokenUrl": "https://mcp.nobleblocks.com/token",
-        "scopes": ["search"]
-      }
-    }
-  ]
+    ],
+    "remoteEndpoints": [
+        {
+            "url": "https://mcp.nobleblocks.com/mcp",
+            "transport": {
+                "type": "streamable-http"
+            },
+            "auth": {
+                "type": "oauth2",
+                "authorizationUrl": "https://mcp.nobleblocks.com/authorize",
+                "tokenUrl": "https://mcp.nobleblocks.com/token",
+                "scopes": [
+                    "search"
+                ]
+            }
+        }
+    ]
 }

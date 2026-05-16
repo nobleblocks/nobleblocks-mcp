@@ -268,6 +268,132 @@
                     }
                 }
             }
+        },
+        "/api/v1/papers/multi-search": {
+            "post": {
+                "operationId": "multiSearchPapers",
+                "summary": "Batch search multiple queries",
+                "description": "Run up to 10 search queries in one call. Results are deduplicated. Papers appearing in multiple queries are flagged as potentially foundational. Ideal for systematic reviews and multi-faceted research.",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "queries": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "minItems": 1,
+                                        "maxItems": 10,
+                                        "description": "List of search queries."
+                                    },
+                                    "limit_per_query": {
+                                        "type": "integer",
+                                        "default": 10,
+                                        "minimum": 1,
+                                        "maximum": 20
+                                    },
+                                    "min_year": {"type": "integer"},
+                                    "max_year": {"type": "integer"},
+                                    "deduplicate": {"type": "boolean", "default": true}
+                                },
+                                "required": ["queries"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Combined search results",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "queries_run": {"type": "integer"},
+                                        "total_unique_papers": {"type": "integer"},
+                                        "per_query_summary": {"type": "array", "items": {"type": "object"}},
+                                        "combined_results": {"type": "array", "items": {"$ref": "#/components/schemas/Paper"}}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/papers/field-overview": {
+            "get": {
+                "operationId": "getFieldOverview",
+                "summary": "Get research field overview",
+                "description": "Comprehensive overview of a research field: seminal papers, recent developments, key reviews, identified gaps, and top authors. Runs 4 targeted searches automatically.",
+                "parameters": [
+                    {
+                        "name": "topic",
+                        "in": "query",
+                        "required": true,
+                        "schema": {"type": "string", "maxLength": 500},
+                        "description": "Research topic or field."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Field overview with sections",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "topic": {"type": "string"},
+                                        "field_overview": {"type": "object"},
+                                        "top_authors": {"type": "array", "items": {"type": "object"}}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/papers/research-gaps": {
+            "get": {
+                "operationId": "findResearchGaps",
+                "summary": "Find research gaps",
+                "description": "Identify research gaps by analyzing review papers for limitation language, future directions, and unmet needs.",
+                "parameters": [
+                    {
+                        "name": "field",
+                        "in": "query",
+                        "required": true,
+                        "schema": {"type": "string", "maxLength": 500},
+                        "description": "Research field to analyze."
+                    },
+                    {
+                        "name": "min_year",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 2020},
+                        "description": "Earliest year (default 2020)."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Papers with gap signals",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "field": {"type": "string"},
+                                        "papers_with_gap_signals": {"type": "integer"},
+                                        "results": {"type": "array", "items": {"$ref": "#/components/schemas/Paper"}}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "components": {
