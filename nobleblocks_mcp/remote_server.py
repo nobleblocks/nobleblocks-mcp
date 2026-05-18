@@ -6,7 +6,7 @@ This is the server that gets deployed at https://mcp.nobleblocks.com/mcp
 for listing in the Claude Connectors Directory.
 
 Users connect by clicking "Connect" in Claude → redirected to NobleBlocks
-login → authenticated → Claude can search 290M+ papers on behalf of the user.
+login → authenticated → Claude can search 300M+ papers on behalf of the user.
 
 Run locally:  python -m nobleblocks_mcp.remote_server
 Deploy:       Docker → ECS (see Dockerfile.remote)
@@ -33,7 +33,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.server.auth.settings import AuthSettings
 from nobleblocks_mcp.oauth_provider import NobleBlocksOAuthProvider
-from nobleblocks_mcp.prompts import get_all_prompts, get_prompt
 
 load_dotenv()
 
@@ -61,7 +60,7 @@ oauth_provider = NobleBlocksOAuthProvider()
 mcp = FastMCP(
     name="NobleBlocks",
     instructions=(
-        "NobleBlocks gives you access to 290M+ academic papers from PubMed, "
+        "NobleBlocks gives you access to 300M+ academic papers from PubMed, "
         "OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. "
         "Use the search tool for any research question. Use find_similar to "
         "discover related work. Use get_citation_graph for impact analysis."
@@ -174,7 +173,7 @@ async def search_papers(
     source: str | None = None,
     sort: str = "relevance",
 ) -> str:
-    """Search 290M+ academic papers from PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
+    """Search 300M+ academic papers from PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
     query = sanitize_input(query)
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
@@ -196,7 +195,7 @@ async def search_papers(
         "query": query,
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:min(limit, 50)]],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 290M+ papers across 6 academic databases",
+        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 300M+ papers across 6 academic databases",
     }
     return json.dumps(result, indent=2, default=str)
 
@@ -285,303 +284,6 @@ async def get_citation_graph(
     return json.dumps(result, indent=2, default=str)
 
 
-@mcp.tool(
-    annotations={
-        "title": "Multi-Search (Batch)",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
-)
-async def multi_search(
-    queries: list[str],
-    limit_per_query: int = 10,
-    min_year: int | None = None,
-    max_year: int | None = None,
-    deduplicate: bool = True,
-) -> str:
-    """Run multiple search queries in batch and return combined, deduplicated results. Ideal for systematic reviews, multi-faceted research questions, and building comprehensive literature sets. Each query searches 290M+ papers."""
-    if not queries or len(queries) > 10:
-        return json.dumps({"error": "Provide 1-10 queries"})
-
-    all_papers: list[dict] = []
-    seen_ids: set[str] = set()
-    query_results: list[dict] = []
-
-    for q in queries:
-        q = sanitize_input(q)
-        if len(q) < 2:
-            query_results.append({"query": q, "total": 0, "results": []})
-            continue
-
-        data = await _api_get(
-            "/api/v1/papers/search",
-            {
-                "query": q,
-                "limit": min(limit_per_query, 20),
-                "min_year": min_year,
-                "max_year": max_year,
-                "sort": "relevance",
-            },
-        )
-        papers = data.get("papers") or data.get("results") or []
-        compacted = [_compact_paper(p) for p in papers[:min(limit_per_query, 20)]]
-
-        # Track cross-query hits
-        for cp in compacted:
-            pid = cp.get("id") or cp.get("doi") or cp.get("title", "")
-            if deduplicate and pid in seen_ids:
-                cp["_cross_query_hit"] = True
-            else:
-                seen_ids.add(pid)
-                all_papers.append(cp)
-
-        query_results.append({
-            "query": q,
-            "total": data.get("total", len(papers)),
-            "results_count": len(compacted),
-        })
-
-    # Mark papers that appeared in multiple queries (foundational signals)
-    result = {
-        "queries_run": len(queries),
-        "total_unique_papers": len(all_papers),
-        "per_query_summary": query_results,
-        "combined_results": all_papers,
-        "attribution": "Powered by NobleBlocks multi-search (nobleblocks.com) — 290M+ papers",
-    }
-    return json.dumps(result, indent=2, default=str)
-
-
-@mcp.tool(
-    annotations={
-        "title": "Field Overview",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
-)
-async def get_field_overview(
-    topic: str,
-    include_trends: bool = True,
-) -> str:
-    """Get a comprehensive overview of a research field: top papers, recent developments, key authors, and publication trends. Runs multiple targeted searches automatically."""
-    topic = sanitize_input(topic)
-    if len(topic) < 3:
-        return json.dumps({"error": "Topic must be at least 3 characters"})
-
-    # Run 4 searches to build the overview
-    searches = [
-        {"query": topic, "sort": "citations", "limit": 10},  # Most cited
-        {"query": topic, "sort": "date", "limit": 10, "min_year": 2023},  # Recent
-        {"query": f"{topic} systematic review meta-analysis", "sort": "citations", "limit": 5},  # Reviews
-        {"query": f"{topic} research gaps future directions", "sort": "date", "limit": 5, "min_year": 2021},  # Gaps
-    ]
-
-    sections: dict[str, Any] = {}
-    for i, s in enumerate(searches):
-        data = await _api_get("/api/v1/papers/search", {k: v for k, v in s.items() if v is not None})
-        papers = data.get("papers") or data.get("results") or []
-        section_names = ["seminal_papers", "recent_papers", "reviews", "gaps_and_directions"]
-        sections[section_names[i]] = {
-            "total_in_db": data.get("total", 0),
-            "papers": [_compact_paper(p) for p in papers],
-        }
-
-    # Extract top authors across all results
-    author_counts: dict[str, int] = {}
-    for section in sections.values():
-        for p in section.get("papers", []):
-            for a in p.get("authors", [])[:3]:
-                if a:
-                    author_counts[a] = author_counts.get(a, 0) + 1
-    top_authors = sorted(author_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    result = {
-        "topic": topic,
-        "field_overview": sections,
-        "top_authors": [{"name": name, "papers_in_results": count} for name, count in top_authors],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 290M+ papers across 6 databases",
-    }
-    return json.dumps(result, indent=2, default=str)
-
-
-@mcp.tool(
-    annotations={
-        "title": "Find Research Gaps",
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "idempotentHint": True,
-        "openWorldHint": False,
-    }
-)
-async def find_research_gaps(
-    field: str,
-    min_year: int | None = 2020,
-) -> str:
-    """Systematically identify research gaps in a field by searching for review papers that mention limitations, future directions, and unmet needs. Returns gap-indicating quotes from abstracts."""
-    field = sanitize_input(field)
-    if len(field) < 3:
-        return json.dumps({"error": "Field must be at least 3 characters"})
-
-    gap_queries = [
-        f"{field} research gaps future directions",
-        f"{field} limitations unmet needs",
-        f"{field} systematic review recommendations",
-    ]
-
-    all_gaps: list[dict] = []
-    for q in gap_queries:
-        data = await _api_get(
-            "/api/v1/papers/search",
-            {"query": q, "limit": 10, "min_year": min_year, "sort": "citations"},
-        )
-        papers = data.get("papers") or data.get("results") or []
-        for p in papers:
-            compact = _compact_paper(p)
-            # Extract gap-indicating phrases from abstract
-            abstract = (p.get("abstract") or "").lower()
-            gap_indicators = []
-            for phrase in ["future research", "remains unclear", "no studies have",
-                          "limited evidence", "further investigation", "critical gap",
-                          "poorly understood", "warrants further", "understudied"]:
-                if phrase in abstract:
-                    gap_indicators.append(phrase)
-            if gap_indicators:
-                compact["gap_signals"] = gap_indicators
-                all_gaps.append(compact)
-
-    # Deduplicate by title
-    seen_titles: set[str] = set()
-    unique_gaps = []
-    for g in all_gaps:
-        title = (g.get("title") or "").lower()
-        if title not in seen_titles:
-            seen_titles.add(title)
-            unique_gaps.append(g)
-
-    result = {
-        "field": field,
-        "papers_with_gap_signals": len(unique_gaps),
-        "results": unique_gaps[:20],
-        "methodology_note": (
-            "Papers are ranked by citation count and filtered for gap-indicating "
-            "language in abstracts. Review papers and meta-analyses are strongest signals."
-        ),
-        "attribution": "Powered by NobleBlocks gap analysis (nobleblocks.com)",
-    }
-    return json.dumps(result, indent=2, default=str)
-
-
-# ─── MCP Prompts (Skills) ─────────────────────────────────────────────────────
-
-@mcp.prompt()
-def literature_review(topic: str, depth: str = "standard") -> str:
-    """Build a comprehensive literature review with systematic sub-area searches."""
-    p = get_prompt("literature_review")
-    return p["template"].format(topic=topic, depth=depth)
-
-
-@mcp.prompt()
-def grant_research(idea: str, career_stage: str = "not specified", prelim_data: str = "not specified") -> str:
-    """Find NIH grants and position your research idea with gap analysis."""
-    p = get_prompt("grant_research")
-    return p["template"].format(idea=idea, career_stage=career_stage, prelim_data=prelim_data)
-
-
-@mcp.prompt()
-def curriculum_reading_list(syllabus: str) -> str:
-    """Build a peer-reviewed reading list mapped to course learning objectives."""
-    p = get_prompt("curriculum_reading_list")
-    return p["template"].format(syllabus=syllabus)
-
-
-@mcp.prompt()
-def systematic_review_protocol(question: str, framework: str = "PICO") -> str:
-    """Generate a PRISMA-compliant systematic review protocol with search strings."""
-    p = get_prompt("systematic_review_protocol")
-    return p["template"].format(question=question, framework=framework)
-
-
-@mcp.prompt()
-def research_gaps(field: str) -> str:
-    """Identify understudied areas and open questions in a research field."""
-    p = get_prompt("research_gaps")
-    return p["template"].format(field=field)
-
-
-@mcp.prompt()
-def evidence_synthesis(question: str) -> str:
-    """Answer a research question with cited evidence from the literature."""
-    p = get_prompt("evidence_synthesis")
-    return p["template"].format(question=question)
-
-
-@mcp.prompt()
-def paper_deep_dive(paper: str) -> str:
-    """Explore a paper's intellectual context: ancestry, impact, and neighborhood."""
-    p = get_prompt("paper_deep_dive")
-    return p["template"].format(paper=paper)
-
-
-@mcp.prompt()
-def methodology_scout(method: str, field: str = "any field") -> str:
-    """Find exemplary papers using a specific research method."""
-    p = get_prompt("methodology_scout")
-    return p["template"].format(method=method, field=field)
-
-
-@mcp.prompt()
-def thesis_planner(topic: str, level: str = "PhD") -> str:
-    """Map literature landscape and plan thesis chapter structure."""
-    p = get_prompt("thesis_planner")
-    return p["template"].format(topic=topic, level=level)
-
-
-@mcp.prompt()
-def journal_targeting(title: str, abstract: str) -> str:
-    """Find the best journals for your manuscript with fit analysis."""
-    p = get_prompt("journal_targeting")
-    return p["template"].format(title=title, abstract=abstract)
-
-
-@mcp.prompt()
-def prior_art_search(idea: str, context: str = "research") -> str:
-    """Exhaustive prior art search for patent, grant, or startup novelty claims."""
-    p = get_prompt("prior_art_search")
-    return p["template"].format(idea=idea, context=context)
-
-
-@mcp.prompt()
-def trend_tracker(topic: str, years: str = "2015-2026") -> str:
-    """Track publication trends, emerging subfields, and research hotspots."""
-    p = get_prompt("trend_tracker")
-    return p["template"].format(topic=topic, years=years)
-
-
-@mcp.prompt()
-def clinical_evidence(intervention: str, condition: str, population: str = "general adult") -> str:
-    """Evaluate clinical evidence for a treatment or intervention."""
-    p = get_prompt("clinical_evidence")
-    return p["template"].format(intervention=intervention, condition=condition, population=population)
-
-
-@mcp.prompt()
-def collaboration_finder(research_area: str, complement: str = "any complementary expertise") -> str:
-    """Identify potential research collaborators and active groups."""
-    p = get_prompt("collaboration_finder")
-    return p["template"].format(research_area=research_area, complement=complement)
-
-
-@mcp.prompt()
-def proposal_strengthener(proposal: str) -> str:
-    """Validate claims, find better citations, and anticipate reviewer concerns."""
-    p = get_prompt("proposal_strengthener")
-    return p["template"].format(proposal=proposal)
-
-
 # ─── Consent Page ──────────────────────────────────────────────────────────────
 CONSENT_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -630,7 +332,7 @@ CONSENT_HTML = """<!DOCTYPE html>
   <div class="card">
     <div class="logo">NB</div>
     <h1>Connect NobleBlocks to {client_name}</h1>
-    <p class="subtitle">Search 290M+ academic papers directly from {client_name}</p>
+    <p class="subtitle">Search 300M+ academic papers directly from {client_name}</p>
 
     <div class="scope">
       <h3>This will allow {client_name} to:</h3>
@@ -757,7 +459,7 @@ async def health_check(request: Request) -> JSONResponse:
         "status": "healthy",
         "service": "nobleblocks-mcp",
         "version": "2.0.0",
-        "papers": "290M+",
+        "papers": "300M+",
     })
 
 
@@ -771,7 +473,7 @@ border-radius:8px;font-family:monospace;font-size:14px;margin:16px 0;display:blo
 a{color:#6366f1}</style></head>
 <body>
 <h1>NobleBlocks MCP Server</h1>
-<p>Search 290M+ academic papers from Claude, ChatGPT, Cursor, and other AI assistants.</p>
+<p>Search 300M+ academic papers from Claude, ChatGPT, Cursor, and other AI assistants.</p>
 <span class="url">Connector URL: https://mcp.nobleblocks.com/mcp</span>
 <p><strong>How to connect:</strong></p>
 <ol style="color:#475569;line-height:2">

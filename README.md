@@ -6,13 +6,11 @@
   <img src="https://www.nobleblocks.com/favicon.png" width="80" alt="NobleBlocks" />
 </p>
 
-> Search **290M+ academic papers** from your AI assistant — Claude, ChatGPT, Cursor, VS Code Copilot, and more.
+> Search **300M+ academic papers** from your AI assistant — Claude, ChatGPT, Cursor, VS Code Copilot, and more.
 
 ---
 
 ## What you get
-
-### Tools
 
 | Tool | Description |
 |------|-------------|
@@ -20,30 +18,7 @@
 | `get_paper` | Fetch metadata for a paper by DOI, PMID, arXiv ID, or OpenAlex ID |
 | `find_similar` | Semantic similarity search using vector embeddings |
 | `get_citation_graph` | Explore who cites a paper and what it references |
-| `multi_search` | Batch search: run up to 10 queries with deduplication (systematic reviews, multi-faceted research) |
-| `get_field_overview` | Comprehensive field overview: top papers, recent work, reviews, gaps, key authors |
-| `find_research_gaps` | Identify gaps by analyzing review papers for limitation/future-direction language |
 | `create_literature_review` | Generate a structured lit review with citations (Pro only) |
-
-### Pre-built Research Workflows (Prompts/Skills)
-
-| Skill | What It Does |
-|-------|-------------|
-| `literature_review` | Multi-step lit review: recon → framework → sub-area searches → synthesis |
-| `grant_research` | NIH grant positioning: gap analysis → RePORTER mapping → mechanism matching |
-| `curriculum_reading_list` | Course reading list with discussion questions mapped to learning objectives |
-| `systematic_review_protocol` | PRISMA-compliant protocol with search strings per database |
-| `research_gaps` | Systematic gap identification: population, methodological, mechanism, application |
-| `evidence_synthesis` | Evidence-based answer: meta-analyses → RCTs → observational → quality assessment |
-| `paper_deep_dive` | Paper context: intellectual ancestry, impact, neighborhood, field positioning |
-| `methodology_scout` | Find exemplary papers using a specific method, with best practices & pitfalls |
-| `thesis_planner` | Literature landscape mapping for thesis/dissertation planning |
-| `journal_targeting` | Find best journals for your manuscript with fit analysis |
-| `prior_art_search` | Exhaustive prior art for patents, grants, or startup novelty claims |
-| `trend_tracker` | Publication trend analysis with era-gated searches |
-| `clinical_evidence` | Clinical evidence hierarchy (meta-analyses → RCTs → guidelines → safety) |
-| `collaboration_finder` | Identify active research groups and potential collaborators |
-| `proposal_strengthener` | Validate claims, find better citations, anticipate reviewer concerns |
 
 ## Quick Start
 
@@ -90,23 +65,11 @@ Once installed, just ask naturally:
 
 > "Find the top 5 most-cited papers on CRISPR base editing from 2022-2024"
 
-> "Help me with a literature review on gut microbiome and mental health"
-
-> "Find NIH grants for my research on AI-assisted drug discovery"
-
-> "What are the research gaps in immunotherapy for solid tumors?"
-
-> "Build me a reading list for my graduate neuroscience course"
-
-> "Is my idea novel? Using LLMs for automated systematic review screening"
-
-> "What's trending in single-cell RNA-seq research since 2020?"
-
 > "Show me papers similar to 'Attention Is All You Need' by Vaswani et al."
 
-> "Find the best journal for my paper on climate adaptation strategies"
+> "What's the citation network for DOI 10.1038/s41586-020-2649-2?"
 
-> "Evaluate the clinical evidence for psilocybin in treatment-resistant depression"
+> "Generate a literature review on stem cell treatments for Parkinson's disease"
 
 ## Configure for Other AI Tools
 

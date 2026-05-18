@@ -2,7 +2,7 @@
 NobleBlocks MCP Server — Production Grade
 ==========================================
 
-Exposes the NobleBlocks paper search corpus (290M+ papers across PubMed,
+Exposes the NobleBlocks paper search corpus (300M+ papers across PubMed,
 OpenAlex, SemanticScholar, arXiv, EuropePMC, Scopus) to AI tools that speak
 the Model Context Protocol — Claude Desktop, ChatGPT (via MCP bridges),
 Cursor, VS Code Copilot, etc.
@@ -44,9 +44,7 @@ from dotenv import load_dotenv
 from mcp.server import Server, NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, Prompt, PromptArgument, PromptMessage, GetPromptResult
-
-from nobleblocks_mcp.prompts import get_all_prompts, get_prompt
+from mcp.types import Tool, TextContent
 
 load_dotenv()
 
@@ -209,7 +207,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_papers",
             description=(
-                "Full-text search across 290M+ academic papers from PubMed, OpenAlex, "
+                "Full-text search across 300M+ academic papers from PubMed, OpenAlex, "
                 "SemanticScholar, arXiv, EuropePMC, and Scopus. Returns ranked results "
                 "with title, authors, year, abstract, citations, and DOI. "
                 "Use this when the user asks about scientific topics, medical research, "
@@ -375,91 +373,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["topic"],
             },
         ),
-        Tool(
-            name="multi_search",
-            description=(
-                "Run multiple search queries in batch and return combined, deduplicated results. "
-                "Ideal for systematic reviews, multi-faceted research questions, and building "
-                "comprehensive literature sets. Runs up to 10 queries efficiently. "
-                "Papers appearing in multiple queries are flagged as potentially foundational."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "queries": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of 1-10 search queries to run.",
-                        "minItems": 1,
-                        "maxItems": 10,
-                    },
-                    "limit_per_query": {
-                        "type": "integer",
-                        "description": "Max results per query (1-20). Default 10.",
-                        "default": 10,
-                        "minimum": 1,
-                        "maximum": 20,
-                    },
-                    "min_year": {
-                        "type": "integer",
-                        "description": "Earliest publication year filter.",
-                    },
-                    "max_year": {
-                        "type": "integer",
-                        "description": "Latest publication year filter.",
-                    },
-                    "deduplicate": {
-                        "type": "boolean",
-                        "description": "Remove duplicate papers across queries. Default true.",
-                        "default": True,
-                    },
-                },
-                "required": ["queries"],
-            },
-        ),
-        Tool(
-            name="get_field_overview",
-            description=(
-                "Get a comprehensive overview of a research field: top papers, recent "
-                "developments, key authors, reviews, and identified gaps. Runs 4 targeted "
-                "searches automatically to build the full picture."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "topic": {
-                        "type": "string",
-                        "description": "Research topic or field to overview.",
-                        "maxLength": MAX_QUERY_LENGTH,
-                    },
-                },
-                "required": ["topic"],
-            },
-        ),
-        Tool(
-            name="find_research_gaps",
-            description=(
-                "Systematically identify research gaps in a field by searching for review "
-                "papers that mention limitations, future directions, and unmet needs. "
-                "Returns papers with gap-indicating language highlighted."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "field": {
-                        "type": "string",
-                        "description": "Research field to analyze for gaps.",
-                        "maxLength": MAX_QUERY_LENGTH,
-                    },
-                    "min_year": {
-                        "type": "integer",
-                        "description": "Earliest year for gap papers. Default 2020.",
-                        "default": 2020,
-                    },
-                },
-                "required": ["field"],
-            },
-        ),
     ]
 
 
@@ -489,12 +402,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _tool_get_citation_graph(safe_args)
         elif name == "create_literature_review":
             result = await _tool_create_literature_review(safe_args)
-        elif name == "multi_search":
-            result = await _tool_multi_search(safe_args)
-        elif name == "get_field_overview":
-            result = await _tool_get_field_overview(safe_args)
-        elif name == "find_research_gaps":
-            result = await _tool_find_research_gaps(safe_args)
         else:
             audit_log(name, arguments, success=False, duration_ms=0)
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -542,7 +449,7 @@ def _sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
 # ─── Tool implementations ──────────────────────────────────────────────────────
 
 async def _tool_search_papers(args: dict[str, Any]) -> dict:
-    """Search 290M+ papers."""
+    """Search 300M+ papers."""
     query = args.get("query", "")
     if len(query) < 2:
         raise ValueError("Query must be at least 2 characters")
@@ -565,7 +472,7 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         "query": query,
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:limit]],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 290M+ papers across 6 academic databases",
+        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 300M+ papers across 6 academic databases",
     }
 
 
@@ -666,203 +573,6 @@ async def _tool_create_literature_review(args: dict[str, Any]) -> dict:
         "full_url": f"https://www.nobleblocks.com/notebooks/{data.get('id', '')}",
         "attribution": "Generated by NobleBlocks AI Writer (nobleblocks.com)",
     }
-
-
-async def _tool_multi_search(args: dict[str, Any]) -> dict:
-    """Batch search across multiple queries with deduplication."""
-    queries = args.get("queries", [])
-    if not queries or len(queries) > 10:
-        raise ValueError("Provide 1-10 queries")
-
-    limit_per = min(int(args.get("limit_per_query", 10)), 20)
-    min_year = args.get("min_year")
-    max_year = args.get("max_year")
-    deduplicate = args.get("deduplicate", True)
-
-    all_papers: list[dict] = []
-    seen_ids: set[str] = set()
-    query_results: list[dict] = []
-
-    for q in queries:
-        if isinstance(q, str):
-            q = sanitize_input(q)
-        else:
-            continue
-        if len(q) < 2:
-            query_results.append({"query": q, "total": 0, "results_count": 0})
-            continue
-
-        data = await _get(
-            "/api/v1/papers/search",
-            {"query": q, "limit": limit_per, "min_year": min_year, "max_year": max_year, "sort": "relevance"},
-        )
-        papers = data.get("papers") or data.get("results") or []
-        compacted = [_compact_paper(p) for p in papers[:limit_per]]
-
-        for cp in compacted:
-            pid = cp.get("id") or cp.get("doi") or cp.get("title", "")
-            if deduplicate and pid in seen_ids:
-                cp["_cross_query_hit"] = True
-            else:
-                seen_ids.add(pid)
-                all_papers.append(cp)
-
-        query_results.append({
-            "query": q,
-            "total": data.get("total", len(papers)),
-            "results_count": len(compacted),
-        })
-
-    return {
-        "queries_run": len(queries),
-        "total_unique_papers": len(all_papers),
-        "per_query_summary": query_results,
-        "combined_results": all_papers,
-        "attribution": "Powered by NobleBlocks multi-search (nobleblocks.com)",
-    }
-
-
-async def _tool_get_field_overview(args: dict[str, Any]) -> dict:
-    """Get comprehensive field overview with multiple targeted searches."""
-    topic = args.get("topic", "")
-    if len(topic) < 3:
-        raise ValueError("Topic must be at least 3 characters")
-
-    searches = [
-        {"query": topic, "sort": "citations", "limit": 10},
-        {"query": topic, "sort": "date", "limit": 10, "min_year": 2023},
-        {"query": f"{topic} systematic review meta-analysis", "sort": "citations", "limit": 5},
-        {"query": f"{topic} research gaps future directions", "sort": "date", "limit": 5, "min_year": 2021},
-    ]
-
-    section_names = ["seminal_papers", "recent_papers", "reviews", "gaps_and_directions"]
-    sections: dict[str, Any] = {}
-
-    for i, s in enumerate(searches):
-        data = await _get("/api/v1/papers/search", {k: v for k, v in s.items() if v is not None})
-        papers = data.get("papers") or data.get("results") or []
-        sections[section_names[i]] = {
-            "total_in_db": data.get("total", 0),
-            "papers": [_compact_paper(p) for p in papers],
-        }
-
-    author_counts: dict[str, int] = {}
-    for section in sections.values():
-        for p in section.get("papers", []):
-            for a in p.get("authors", [])[:3]:
-                if a:
-                    author_counts[a] = author_counts.get(a, 0) + 1
-    top_authors = sorted(author_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    return {
-        "topic": topic,
-        "field_overview": sections,
-        "top_authors": [{"name": name, "papers_in_results": count} for name, count in top_authors],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 290M+ papers across 6 databases",
-    }
-
-
-async def _tool_find_research_gaps(args: dict[str, Any]) -> dict:
-    """Find research gaps by analyzing review paper abstracts."""
-    field = args.get("field", "")
-    if len(field) < 3:
-        raise ValueError("Field must be at least 3 characters")
-    min_year = args.get("min_year", 2020)
-
-    gap_queries = [
-        f"{field} research gaps future directions",
-        f"{field} limitations unmet needs",
-        f"{field} systematic review recommendations",
-    ]
-
-    all_gaps: list[dict] = []
-    for q in gap_queries:
-        data = await _get(
-            "/api/v1/papers/search",
-            {"query": q, "limit": 10, "min_year": min_year, "sort": "citations"},
-        )
-        papers = data.get("papers") or data.get("results") or []
-        for p in papers:
-            compact = _compact_paper(p)
-            abstract = (p.get("abstract") or "").lower()
-            gap_indicators = []
-            for phrase in ["future research", "remains unclear", "no studies have",
-                          "limited evidence", "further investigation", "critical gap",
-                          "poorly understood", "warrants further", "understudied"]:
-                if phrase in abstract:
-                    gap_indicators.append(phrase)
-            if gap_indicators:
-                compact["gap_signals"] = gap_indicators
-                all_gaps.append(compact)
-
-    seen_titles: set[str] = set()
-    unique_gaps = []
-    for g in all_gaps:
-        title = (g.get("title") or "").lower()
-        if title not in seen_titles:
-            seen_titles.add(title)
-            unique_gaps.append(g)
-
-    return {
-        "field": field,
-        "papers_with_gap_signals": len(unique_gaps),
-        "results": unique_gaps[:20],
-        "attribution": "Powered by NobleBlocks gap analysis (nobleblocks.com)",
-    }
-
-
-# ─── Prompts (Skills) ─────────────────────────────────────────────────────────
-
-@server.list_prompts()
-async def list_prompts() -> list[Prompt]:
-    """Return all pre-built research workflow prompts."""
-    prompts_list = []
-    for p in get_all_prompts():
-        prompts_list.append(
-            Prompt(
-                name=p["name"],
-                description=p.get("description", ""),
-                arguments=[
-                    PromptArgument(
-                        name=a["name"],
-                        description=a.get("description", ""),
-                        required=a.get("required", False),
-                    )
-                    for a in p.get("arguments", [])
-                ],
-            )
-        )
-    return prompts_list
-
-
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: dict[str, str] | None = None) -> GetPromptResult:
-    """Render a prompt template with arguments."""
-    prompt_def = get_prompt(name)
-    if not prompt_def:
-        raise ValueError(f"Unknown prompt: {name}")
-
-    args = arguments or {}
-    # Fill in defaults for missing optional args
-    for arg_def in prompt_def.get("arguments", []):
-        if arg_def["name"] not in args:
-            args[arg_def["name"]] = arg_def.get("default", f"[{arg_def['name']}]")
-
-    template = prompt_def["template"]
-    try:
-        rendered = template.format(**args)
-    except KeyError as e:
-        rendered = template  # Return unformatted if args don't match
-
-    return GetPromptResult(
-        description=prompt_def.get("description", ""),
-        messages=[
-            PromptMessage(
-                role="user",
-                content=TextContent(type="text", text=rendered),
-            )
-        ],
-    )
 
 
 # ─── Paper formatting ──────────────────────────────────────────────────────────
