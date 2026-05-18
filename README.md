@@ -136,7 +136,7 @@ User's AI tool (Claude, Cursor, etc.)
         ↓ HTTPS (Bearer auth)
   NobleBlocks API (nobleblocks.com)
         ↓ Internal VPC
-  Paper Search DB (290M papers, pgvector)
+  Paper Search DB (300M+ papers, pgvector)
 ```
 
 The MCP server is a thin authenticated proxy — all search logic lives on the NobleBlocks backend. This means:
