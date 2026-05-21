@@ -54,12 +54,13 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-USER_AGENT = "nobleblocks-mcp/1.0.0"
+USER_AGENT = "nobleblocks-mcp/2.0.0"
 HTTP_TIMEOUT = 30.0
 
 # Rate limiting
-RATE_LIMIT_FREE = int(os.environ.get("RATE_LIMIT_FREE", "100"))  # per day (no key)
-RATE_LIMIT_PRO = int(os.environ.get("RATE_LIMIT_PRO", "5000"))  # per day (with key)
+RATE_LIMIT_TRIAL = int(os.environ.get("RATE_LIMIT_TRIAL", "3"))  # lifetime without key (taste)
+RATE_LIMIT_FREE = int(os.environ.get("RATE_LIMIT_FREE", "100"))  # per day (free key)
+RATE_LIMIT_PRO = int(os.environ.get("RATE_LIMIT_PRO", "5000"))  # per day (pro key)
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60"))
 
 # Audit log
@@ -89,12 +90,18 @@ def sanitize_input(value: str, max_length: int = MAX_QUERY_LENGTH) -> str:
 
 
 # ─── Rate limiter (in-memory sliding window) ───────────────────────────────────
+
+SIGNUP_URL = "https://www.nobleblocks.com/auth/signup"
+API_KEY_URL = "https://www.nobleblocks.com/settings/api-keys"
+
+
 class RateLimiter:
     """Simple in-memory rate limiter with daily + per-minute windows."""
 
     def __init__(self):
         self._daily: dict[str, list[float]] = {}  # key -> [timestamps]
         self._minute: dict[str, list[float]] = {}
+        self._trial_count: int = 0  # lifetime counter for no-key usage
 
     def _prune(self, bucket: list[float], window_seconds: float) -> list[float]:
         cutoff = time.time() - window_seconds
@@ -103,6 +110,17 @@ class RateLimiter:
     def check(self, key: str = "anonymous") -> tuple[bool, str]:
         """Returns (allowed, reason). Raises nothing."""
         now = time.time()
+
+        # No API key: strict trial gate (3 queries lifetime, then require signup)
+        if not API_KEY:
+            self._trial_count += 1
+            if self._trial_count > RATE_LIMIT_TRIAL:
+                return False, (
+                    f"Trial expired ({RATE_LIMIT_TRIAL} free queries used). "
+                    f"Get a free API key in 30 seconds: {SIGNUP_URL} → "
+                    f"then generate a key at {API_KEY_URL} and set NOBLEBLOCKS_API_KEY."
+                )
+            return True, ""
 
         # Per-minute check
         minute_bucket = self._minute.get(key, [])
@@ -113,7 +131,7 @@ class RateLimiter:
         self._minute[key] = minute_bucket
 
         # Daily check
-        daily_limit = RATE_LIMIT_PRO if API_KEY else RATE_LIMIT_FREE
+        daily_limit = RATE_LIMIT_PRO if API_KEY.startswith("nb_pro_") else RATE_LIMIT_FREE
         daily_bucket = self._daily.get(key, [])
         daily_bucket = self._prune(daily_bucket, 86400)
         if len(daily_bucket) >= daily_limit:
@@ -702,7 +720,7 @@ async def _serve() -> None:
             write_stream,
             InitializationOptions(
                 server_name="nobleblocks",
-                server_version="1.0.0",
+                server_version="2.0.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
@@ -714,7 +732,7 @@ async def _serve() -> None:
 def main() -> None:
     """Console-script entrypoint."""
     import asyncio
-    logger.info("NobleBlocks MCP v1.0.0 | API: %s | Key: %s", API_BASE, "Pro" if API_KEY else "Free tier")
+    logger.info("NobleBlocks MCP v2.0.0 | API: %s | Key: %s", API_BASE, "Pro" if API_KEY else "Free tier")
     asyncio.run(_serve())
 
 

@@ -1,1 +1,13 @@
 __pycache__/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+scripts/deploy_*.py
+*.whl
+*.tar.gz

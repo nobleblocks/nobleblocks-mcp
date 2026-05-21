@@ -35,6 +35,7 @@ Documentation = "https://www.nobleblocks.com/docs/mcp"
 [project.scripts]
 nobleblocks-mcp = "nobleblocks_mcp.server:main"
 nobleblocks-mcp-remote = "nobleblocks_mcp.remote_server:main"
+nobleblocks = "nobleblocks_mcp.cli:main"
 
 [build-system]
 requires = ["hatchling"]
