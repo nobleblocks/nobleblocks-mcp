@@ -5,7 +5,19 @@ description = "MCP server exposing NobleBlocks 300M+ paper search to Claude Desk
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "NobleBlocks", email = "info@nobleblocks.com"}]
-keywords = ["mcp", "nobleblocks", "research", "papers", "academic", "search"]
+keywords = ["mcp", "nobleblocks", "research", "papers", "academic", "search", "knowledge-graph", "vector-search", "pubmed", "arxiv"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Indexing",
+]
+readme = "README.md"
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
