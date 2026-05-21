@@ -178,6 +178,8 @@ def _headers() -> dict[str, str]:
     h = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if API_KEY:
         h["Authorization"] = f"Bearer {API_KEY}"
+    else:
+        h["X-MCP-Trial"] = "true"
     return h
 
 
@@ -187,6 +189,9 @@ async def _get(path: str, params: dict[str, Any]) -> dict:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_headers()) as client:
         resp = await client.get(url, params={k: v for k, v in params.items() if v is not None})
         if resp.status_code == 401:
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if body.get("trial_expired"):
+                raise RuntimeError(body.get("error", "Trial expired. Sign up at https://www.nobleblocks.com/auth/register"))
             raise RuntimeError("Invalid API key. Get one at https://www.nobleblocks.com/settings/api-keys")
         if resp.status_code == 429:
             raise RuntimeError(
@@ -434,7 +439,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     allowed, reason = _rate_limiter.check(key_id)
     if not allowed:
         audit_log(name, arguments, success=False, duration_ms=0)
-        return [TextContent(type="text", text=f"Rate limit: {reason}")]
+        return [TextContent(type="text", text=f"⛔ {reason}")]
+
+    # Trial notice (prepended to response when no key)
+    trial_notice = ""
+    if not API_KEY:
+        remaining = RATE_LIMIT_TRIAL - _rate_limiter._trial_count
+        trial_notice = (
+            f"⚠️ TRIAL MODE — {remaining} free {'query' if remaining == 1 else 'queries'} remaining. "
+            f"Sign up for full access: {SIGNUP_URL}\n\n"
+        )
 
     try:
         # Sanitize all string inputs
@@ -458,7 +472,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
 
         duration = (time.time() - t0) * 1000
         audit_log(name, safe_args, success=True, duration_ms=duration)
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        output = json.dumps(result, indent=2, default=str)
+        return [TextContent(type="text", text=f"{trial_notice}{output}")]
 
     except ValueError as e:
         duration = (time.time() - t0) * 1000
