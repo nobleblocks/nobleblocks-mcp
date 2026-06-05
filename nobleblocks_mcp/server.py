@@ -55,7 +55,8 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-USER_AGENT = "nobleblocks-mcp/2.0.0"
+LOCAL_VERSION = "2.0.1"
+USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
 # Rate limiting
@@ -793,8 +794,31 @@ async def _serve() -> None:
 def main() -> None:
     """Console-script entrypoint."""
     import asyncio
-    logger.info("NobleBlocks MCP v2.0.0 | API: %s | Key: %s", API_BASE, "Pro" if API_KEY else "Free tier")
+    logger.info("NobleBlocks MCP v%s | API: %s | Key: %s", LOCAL_VERSION, API_BASE, "Pro" if API_KEY else "Free tier")
+    # Non-blocking update check
+    _check_for_updates()
     asyncio.run(_serve())
+
+
+def _check_for_updates() -> None:
+    """Warn user if a newer version is available on the remote server."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://mcp.nobleblocks.com/health",
+            headers={"User-Agent": USER_AGENT},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+            remote_version = data.get("version", "")
+            if remote_version and remote_version != LOCAL_VERSION:
+                logger.warning(
+                    "⚠ A newer version is available: v%s (you have v%s). "
+                    "Update with: pip install --upgrade nobleblocks-mcp",
+                    remote_version, LOCAL_VERSION,
+                )
+    except Exception:
+        pass  # Non-critical — don't block startup
 
 
 if __name__ == "__main__":
