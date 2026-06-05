@@ -22,6 +22,8 @@ QUERIES=(
   "graphene" "photosynthesis" "autonomous+vehicles"
   "attention+mechanism" "gravitational+waves"
   "chimeric+antigen+receptor" "IL-6+inflammation"
+  "mRNA+vaccine" "climate+change+mitigation"
+  "single+cell+RNA+sequencing" "tumor+microenvironment"
 )
 
 echo "[$(date -Iseconds)] GIN warmup: ${#QUERIES[@]} queries"
