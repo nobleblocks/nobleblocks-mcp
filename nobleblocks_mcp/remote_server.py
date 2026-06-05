@@ -31,7 +31,7 @@ from starlette.routing import Route, Mount
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AuthorizationParams
-from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from nobleblocks_mcp.oauth_provider import NobleBlocksOAuthProvider
 
 load_dotenv()
@@ -72,6 +72,11 @@ mcp = FastMCP(
         issuer_url=MCP_BASE_URL,
         service_documentation_url="https://www.nobleblocks.com/docs/mcp",
         resource_server_url=MCP_BASE_URL,
+        client_registration_options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=["search", "review", "graph"],
+            default_scopes=["search"],
+        ),
     ),
     host=HOST,
     port=PORT,
