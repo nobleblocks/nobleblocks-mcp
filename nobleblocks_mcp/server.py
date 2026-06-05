@@ -551,6 +551,10 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         {
             "query": query,
             "limit": min(int(args.get("limit", 10)), 50),
+            # PROTECTED: phase=fast MUST stay. Removing this triggers AI rewrites
+            # + external API calls (S2/OpenAlex/CrossRef) for every MCP search,
+            # burning LLM budget and causing latency spikes site-wide.
+            # Verified by: python3 nobleblocks-mcp/scripts/regression_test.py
             "phase": "fast",
             "min_year": args.get("min_year"),
             "max_year": args.get("max_year"),
