@@ -707,7 +707,7 @@ a{color:#6366f1}</style></head>
 # ─── Build the full app ───────────────────────────────────────────────────────
 def create_app() -> Starlette:
     """Create the full Starlette app with MCP + OAuth consent routes."""
-    # Get the MCP Starlette app (includes /mcp, /authorize, /token, etc.)
+    # Get the MCP Starlette app (includes /, /authorize, /token, etc.)
     mcp_app = mcp.streamable_http_app()
 
     # Add our custom routes (consent page, login handler, health)
@@ -724,7 +724,13 @@ def create_app() -> Starlette:
     from starlette.routing import Mount
     routes = custom_routes + [Mount("/", app=mcp_app)]
 
-    return Starlette(routes=routes)
+    # Forward the MCP session manager's lifespan so its task group initializes
+    @asynccontextmanager
+    async def lifespan(app):
+        async with mcp.session_manager.run():
+            yield
+
+    return Starlette(routes=routes, lifespan=lifespan)
 
 
 app = create_app()
