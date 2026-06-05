@@ -3,7 +3,7 @@
 # Keeps PostgreSQL shared_buffers warm so keyword searches respond in <1s
 # Without this, cold GIN scans on 348M papers take 17-25s
 
-BASE="http://localhost:8080/api/v1/search/keyword"
+BASE="http://localhost:8080/api/v1/papers/search"
 QUERIES=(
   "CRISPR" "cancer" "COVID-19" "mRNA" "vaccine" "protein"
   "gene+therapy" "stem+cells" "immunotherapy" "antibiotics"
