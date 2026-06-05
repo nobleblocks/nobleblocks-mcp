@@ -292,7 +292,7 @@ class NobleBlocksOAuthProvider(
         """Register a new OAuth client (Dynamic Client Registration)."""
         if self._load_client(client_info.client_id):
             raise RegistrationError(
-                error=RegistrationErrorCode.INVALID_CLIENT_METADATA,
+                error="invalid_client_metadata",
                 error_description="Client already registered",
             )
         self._save_client(client_info.client_id, client_info)
@@ -345,7 +345,7 @@ class NobleBlocksOAuthProvider(
         pending = self._load_and_delete_pending_auth(auth_state)
         if not pending:
             raise AuthorizeError(
-                error=AuthorizationErrorCode.INVALID_REQUEST,
+                error="invalid_request",
                 error_description="Invalid or expired authorization state",
             )
 
@@ -357,7 +357,7 @@ class NobleBlocksOAuthProvider(
             )
             if resp.status_code != 200:
                 raise AuthorizeError(
-                    error=AuthorizationErrorCode.ACCESS_DENIED,
+                    error="access_denied",
                     error_description="Invalid NobleBlocks session",
                 )
 
