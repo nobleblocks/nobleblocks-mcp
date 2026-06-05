@@ -670,7 +670,7 @@ FAVICON_URL = "https://www.nobleblocks.com/favicon.ico"
 
 # Load icon bytes at startup for fast serving
 import pathlib
-_STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
+_STATIC_DIR = pathlib.Path(__file__).parent / "static"
 _ICON_BYTES = (_STATIC_DIR / "icon.png").read_bytes() if (_STATIC_DIR / "icon.png").exists() else None
 _ICON_64_BYTES = (_STATIC_DIR / "favicon-64.png").read_bytes() if (_STATIC_DIR / "favicon-64.png").exists() else None
 
