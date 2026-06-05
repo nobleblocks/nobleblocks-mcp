@@ -43,6 +43,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 # ─── Configuration ─────────────────────────────────────────────────────────────
 NB_API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rstrip("/")
+NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
 
@@ -104,6 +105,8 @@ def sanitize_input(value: str, max_length: int = MAX_QUERY_LENGTH) -> str:
 
 def _headers(api_key: str = "") -> dict[str, str]:
     h = {"User-Agent": "nobleblocks-mcp/2.0.0", "Accept": "application/json"}
+    if NB_INTERNAL_TOKEN:
+        h["x-internal-token"] = NB_INTERNAL_TOKEN
     if api_key:
         h["Authorization"] = f"Bearer {api_key}"
     return h
