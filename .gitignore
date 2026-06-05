@@ -11,3 +11,5 @@ venv/
 scripts/deploy_*.py
 *.whl
 *.tar.gz
+mcp-registry-key.pem
+route53-changes.json

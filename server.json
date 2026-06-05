@@ -1,45 +1,16 @@
 {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-    "name": "io.github.nobleblocks/nobleblocks-mcp",
-    "title": "NobleBlocks Academic Papers",
-    "description": "Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of other sources — backed by a biomedical knowledge graph with 1.3M+ entities. Ask research questions in plain language, explore citation networks, find related papers, and generate literature reviews instantly.",
+    "name": "com.nobleblocks/nobleblocks-mcp",
+    "description": "Search 340M+ academic papers — citation graphs, semantic similarity, and AI literature reviews.",
     "repository": {
         "url": "https://github.com/nobleblocks/nobleblocks-mcp",
         "source": "github"
     },
     "version": "2.0.0",
-    "packages": [
+    "remotes": [
         {
-            "registryType": "pypi",
-            "identifier": "nobleblocks-mcp",
-            "version": "2.0.0",
-            "transport": {
-                "type": "stdio"
-            },
-            "environmentVariables": [
-                {
-                    "name": "NOBLEBLOCKS_API_KEY",
-                    "description": "API key for Pro tier — higher rate limits and literature review generation. Free tier (100 searches/day) works without a key.",
-                    "isRequired": false,
-                    "isSecret": true
-                }
-            ]
-        }
-    ],
-    "remoteEndpoints": [
-        {
-            "url": "https://mcp.nobleblocks.com/mcp",
-            "transport": {
-                "type": "streamable-http"
-            },
-            "auth": {
-                "type": "oauth2",
-                "authorizationUrl": "https://mcp.nobleblocks.com/authorize",
-                "tokenUrl": "https://mcp.nobleblocks.com/token",
-                "scopes": [
-                    "search"
-                ]
-            }
+            "type": "streamable-http",
+            "url": "https://mcp.nobleblocks.com/mcp"
         }
     ]
 }
