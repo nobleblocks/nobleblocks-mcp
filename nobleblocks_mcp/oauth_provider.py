@@ -93,17 +93,16 @@ class NobleBlocksOAuthProvider(
     def _save_auth_code(self, code_str: str, auth_code: AuthorizationCode):
         self._auth_codes[code_str] = auth_code
         if self._use_dynamo:
-            from .dynamo_store import _epoch
             self._store.put("auth_code", code_str, {
                 "code": auth_code.code,
                 "scopes": auth_code.scopes,
-                "expires_at": auth_code.expires_at.isoformat(),
+                "expires_at": str(auth_code.expires_at),
                 "client_id": auth_code.client_id,
                 "code_challenge": auth_code.code_challenge,
                 "redirect_uri": str(auth_code.redirect_uri) if auth_code.redirect_uri else None,
                 "redirect_uri_provided_explicitly": auth_code.redirect_uri_provided_explicitly,
                 "resource": str(auth_code.resource) if auth_code.resource else None,
-            }, ttl_epoch=_epoch(auth_code.expires_at))
+            }, ttl_epoch=int(auth_code.expires_at))
 
     def _load_auth_code(self, code_str: str) -> AuthorizationCode | None:
         if code_str in self._auth_codes:
@@ -113,10 +112,12 @@ class NobleBlocksOAuthProvider(
             if data:
                 from datetime import datetime
                 from pydantic import AnyHttpUrl
+                expires_raw = data["expires_at"]
+                expires_ts = datetime.fromisoformat(expires_raw).timestamp() if isinstance(expires_raw, str) else float(expires_raw)
                 ac = AuthorizationCode(
                     code=data["code"],
                     scopes=data.get("scopes", []),
-                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                    expires_at=expires_ts,
                     client_id=data["client_id"],
                     code_challenge=data.get("code_challenge"),
                     redirect_uri=AnyHttpUrl(data["redirect_uri"]) if data.get("redirect_uri") else None,
@@ -135,14 +136,13 @@ class NobleBlocksOAuthProvider(
     def _save_access_token(self, token_str: str, access_token: AccessToken):
         self._access_tokens[token_str] = access_token
         if self._use_dynamo:
-            from .dynamo_store import _epoch
             self._store.put("access_token", token_str, {
                 "token": access_token.token,
                 "client_id": access_token.client_id,
                 "scopes": access_token.scopes,
-                "expires_at": access_token.expires_at.isoformat(),
+                "expires_at": str(access_token.expires_at),
                 "resource": str(access_token.resource) if access_token.resource else None,
-            }, ttl_epoch=_epoch(access_token.expires_at))
+            }, ttl_epoch=int(access_token.expires_at))
 
     def _load_access_token(self, token_str: str) -> AccessToken | None:
         if token_str in self._access_tokens:
@@ -152,11 +152,13 @@ class NobleBlocksOAuthProvider(
             if data:
                 from datetime import datetime
                 from pydantic import AnyHttpUrl
+                expires_raw = data["expires_at"]
+                expires_ts = int(datetime.fromisoformat(expires_raw).timestamp()) if isinstance(expires_raw, str) else int(expires_raw)
                 at = AccessToken(
                     token=data["token"],
                     client_id=data["client_id"],
                     scopes=data.get("scopes", []),
-                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                    expires_at=expires_ts,
                     resource=AnyHttpUrl(data["resource"]) if data.get("resource") else None,
                 )
                 self._access_tokens[token_str] = at
@@ -171,13 +173,12 @@ class NobleBlocksOAuthProvider(
     def _save_refresh_token(self, token_str: str, refresh_token: RefreshToken):
         self._refresh_tokens[token_str] = refresh_token
         if self._use_dynamo:
-            from .dynamo_store import _epoch
             self._store.put("refresh_token", token_str, {
                 "token": refresh_token.token,
                 "client_id": refresh_token.client_id,
                 "scopes": refresh_token.scopes,
-                "expires_at": refresh_token.expires_at.isoformat(),
-            }, ttl_epoch=_epoch(refresh_token.expires_at))
+                "expires_at": str(refresh_token.expires_at),
+            }, ttl_epoch=int(refresh_token.expires_at))
 
     def _load_refresh_token(self, token_str: str) -> RefreshToken | None:
         if token_str in self._refresh_tokens:
@@ -186,11 +187,13 @@ class NobleBlocksOAuthProvider(
             data = self._store.get("refresh_token", token_str)
             if data:
                 from datetime import datetime
+                expires_raw = data["expires_at"]
+                expires_ts = int(datetime.fromisoformat(expires_raw).timestamp()) if isinstance(expires_raw, str) else int(expires_raw)
                 rt = RefreshToken(
                     token=data["token"],
                     client_id=data["client_id"],
                     scopes=data.get("scopes", []),
-                    expires_at=datetime.fromisoformat(data["expires_at"]),
+                    expires_at=expires_ts,
                 )
                 self._refresh_tokens[token_str] = rt
                 return rt
@@ -368,7 +371,7 @@ class NobleBlocksOAuthProvider(
         auth_code = AuthorizationCode(
             code=code_str,
             scopes=params.scopes or ["search"],
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=AUTH_CODE_TTL),
+            expires_at=(datetime.now(timezone.utc) + timedelta(seconds=AUTH_CODE_TTL)).timestamp(),
             client_id=pending["client_id"],
             code_challenge=params.code_challenge,
             redirect_uri=params.redirect_uri,
@@ -396,7 +399,7 @@ class NobleBlocksOAuthProvider(
     ) -> AuthorizationCode | None:
         code = self._load_auth_code(authorization_code)
         if code and code.client_id == client.client_id:
-            if code.expires_at > datetime.now(timezone.utc):
+            if code.expires_at > time.time():
                 return code
             # Expired — clean up
             self._delete_auth_code(authorization_code)
@@ -421,7 +424,7 @@ class NobleBlocksOAuthProvider(
             token=access_token_str,
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL),
+            expires_at=int((datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL)).timestamp()),
             resource=authorization_code.resource,
         )
         self._save_access_token(access_token_str, access_token)
@@ -433,7 +436,7 @@ class NobleBlocksOAuthProvider(
             token=refresh_token_str,
             client_id=client.client_id,
             scopes=authorization_code.scopes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL),
+            expires_at=int((datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL)).timestamp()),
         )
         self._save_refresh_token(refresh_token_str, refresh_token)
 
@@ -454,7 +457,7 @@ class NobleBlocksOAuthProvider(
     ) -> RefreshToken | None:
         rt = self._load_refresh_token(refresh_token)
         if rt and rt.client_id == client.client_id:
-            if rt.expires_at > datetime.now(timezone.utc):
+            if rt.expires_at > time.time():
                 return rt
             self._delete_refresh_token(refresh_token)
         return None
@@ -481,7 +484,7 @@ class NobleBlocksOAuthProvider(
             token=access_token_str,
             client_id=client.client_id,
             scopes=scopes or refresh_token.scopes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL),
+            expires_at=int((datetime.now(timezone.utc) + timedelta(seconds=ACCESS_TOKEN_TTL)).timestamp()),
         )
         self._save_access_token(access_token_str, access_token)
         if nb_token:
@@ -493,7 +496,7 @@ class NobleBlocksOAuthProvider(
             token=new_refresh_str,
             client_id=client.client_id,
             scopes=scopes or refresh_token.scopes,
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL),
+            expires_at=int((datetime.now(timezone.utc) + timedelta(seconds=REFRESH_TOKEN_TTL)).timestamp()),
         )
         self._save_refresh_token(new_refresh_str, new_refresh)
 
@@ -509,7 +512,7 @@ class NobleBlocksOAuthProvider(
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         at = self._load_access_token(token)
-        if at and at.expires_at > datetime.now(timezone.utc):
+        if at and at.expires_at > time.time():
             return at
         if at:
             self._delete_access_token(token)
