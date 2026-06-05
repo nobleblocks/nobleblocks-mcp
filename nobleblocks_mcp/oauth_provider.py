@@ -113,7 +113,13 @@ class NobleBlocksOAuthProvider(
                 from datetime import datetime
                 from pydantic import AnyHttpUrl
                 expires_raw = data["expires_at"]
-                expires_ts = datetime.fromisoformat(expires_raw).timestamp() if isinstance(expires_raw, str) else float(expires_raw)
+                if isinstance(expires_raw, str):
+                    try:
+                        expires_ts = float(expires_raw)
+                    except ValueError:
+                        expires_ts = datetime.fromisoformat(expires_raw).timestamp()
+                else:
+                    expires_ts = float(expires_raw)
                 ac = AuthorizationCode(
                     code=data["code"],
                     scopes=data.get("scopes", []),
@@ -153,7 +159,13 @@ class NobleBlocksOAuthProvider(
                 from datetime import datetime
                 from pydantic import AnyHttpUrl
                 expires_raw = data["expires_at"]
-                expires_ts = int(datetime.fromisoformat(expires_raw).timestamp()) if isinstance(expires_raw, str) else int(expires_raw)
+                if isinstance(expires_raw, str):
+                    try:
+                        expires_ts = int(expires_raw)
+                    except ValueError:
+                        expires_ts = int(datetime.fromisoformat(expires_raw).timestamp())
+                else:
+                    expires_ts = int(expires_raw)
                 at = AccessToken(
                     token=data["token"],
                     client_id=data["client_id"],
@@ -188,7 +200,13 @@ class NobleBlocksOAuthProvider(
             if data:
                 from datetime import datetime
                 expires_raw = data["expires_at"]
-                expires_ts = int(datetime.fromisoformat(expires_raw).timestamp()) if isinstance(expires_raw, str) else int(expires_raw)
+                if isinstance(expires_raw, str):
+                    try:
+                        expires_ts = int(expires_raw)
+                    except ValueError:
+                        expires_ts = int(datetime.fromisoformat(expires_raw).timestamp())
+                else:
+                    expires_ts = int(expires_raw)
                 rt = RefreshToken(
                     token=data["token"],
                     client_id=data["client_id"],
