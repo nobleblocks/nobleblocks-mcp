@@ -254,17 +254,32 @@ async def find_similar(query: str, limit: int = 10) -> str:
     if len(query) < 5:
         return json.dumps({"error": "Query must be at least 5 characters"})
 
-    data = await _api_get(
-        "/api/v1/papers/similar",
-        {"query": query, "limit": min(limit, 30)},
-    )
-    papers = data.get("papers") or data.get("results") or []
-    result = {
-        "query": query,
-        "results": [_compact_paper(p) for p in papers],
-        "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
-    }
-    return json.dumps(result, indent=2, default=str)
+    try:
+        data = await _api_get(
+            "/api/v1/papers/similar",
+            {"query": query, "limit": min(limit, 30)},
+        )
+        papers = data.get("papers") or data.get("results") or []
+        result = {
+            "query": query,
+            "results": [_compact_paper(p) for p in papers],
+            "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
+        }
+        return json.dumps(result, indent=2, default=str)
+    except Exception:
+        # Fallback: use text search sorted by relevance when vector search unavailable
+        data = await _api_get(
+            "/api/v1/papers/search",
+            {"query": query, "limit": min(limit, 30), "sort": "relevance"},
+        )
+        papers = data.get("papers") or data.get("results") or []
+        result = {
+            "query": query,
+            "results": [_compact_paper(p) for p in papers],
+            "note": "Used relevance-ranked text search (vector search temporarily unavailable)",
+            "attribution": "Powered by NobleBlocks (nobleblocks.com)",
+        }
+        return json.dumps(result, indent=2, default=str)
 
 
 @mcp.tool(
