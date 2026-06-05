@@ -68,13 +68,18 @@ All usage requires a free NobleBlocks account. Sign up takes 30 seconds:
 
 ---
 
-## Install
+## Quick start (Remote — no install needed)
 
-```bash
-pip install nobleblocks-mcp
-```
+The easiest way to get started is the **remote connector** — no API keys, no Python install:
 
-Or run without installing:
+1. Open [claude.ai](https://claude.ai) → Settings → Connectors (or Integrations)
+2. Click "Add" and paste: `https://mcp.nobleblocks.com/mcp`
+3. Sign in with your NobleBlocks account
+4. Ask Claude: *"Search for papers on CRISPR gene therapy"*
+
+---
+
+## Install (Local)
 
 ```bash
 uvx nobleblocks-mcp
