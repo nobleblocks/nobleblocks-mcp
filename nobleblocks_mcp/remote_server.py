@@ -515,7 +515,7 @@ async def consent_page(request: Request) -> HTMLResponse:
 
 async def oauth_login(request: Request) -> JSONResponse:
     """Handle login form submission — authenticate with NB backend, complete OAuth."""
-    from mcp.server.auth.errors import AuthorizeError
+    from mcp.server.auth.provider import AuthorizeError
     try:
         body = await request.json()
         email = body.get("email", "").strip()
@@ -560,7 +560,7 @@ async def oauth_login(request: Request) -> JSONResponse:
 
 async def oauth_login_google(request: Request) -> JSONResponse:
     """Handle Google login — exchange Google access token for NB token, complete OAuth."""
-    from mcp.server.auth.errors import AuthorizeError
+    from mcp.server.auth.provider import AuthorizeError
     try:
         body = await request.json()
         access_token = body.get("access_token", "").strip()
