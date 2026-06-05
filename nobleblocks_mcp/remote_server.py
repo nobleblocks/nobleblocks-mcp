@@ -210,12 +210,16 @@ async def search_papers(
         },
     )
     papers = data.get("papers") or data.get("results") or []
-    result = {
+    result: dict[str, Any] = {
         "query": query,
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:min(limit, 50)]],
         "attribution": "Powered by NobleBlocks (nobleblocks.com) — 300M+ papers across 6 academic databases",
     }
+    # Surface spelling correction so AI clients can suggest "Did you mean X?"
+    corrected = data.get("correctedQuery")
+    if corrected and corrected.lower() != query.lower():
+        result["did_you_mean"] = corrected
     return json.dumps(result, indent=2, default=str)
 
 
