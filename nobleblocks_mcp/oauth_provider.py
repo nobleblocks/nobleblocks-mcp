@@ -128,7 +128,7 @@ class NobleBlocksOAuthProvider(
                     code_challenge=data.get("code_challenge"),
                     redirect_uri=AnyHttpUrl(data["redirect_uri"]) if data.get("redirect_uri") else None,
                     redirect_uri_provided_explicitly=data.get("redirect_uri_provided_explicitly", False),
-                    resource=AnyHttpUrl(data["resource"]) if data.get("resource") else None,
+                    resource=str(data["resource"]) if data.get("resource") else None,
                 )
                 self._auth_codes[code_str] = ac
                 return ac
@@ -157,7 +157,6 @@ class NobleBlocksOAuthProvider(
             data = self._store.get("access_token", token_str)
             if data:
                 from datetime import datetime
-                from pydantic import AnyHttpUrl
                 expires_raw = data["expires_at"]
                 if isinstance(expires_raw, str):
                     try:
@@ -171,7 +170,7 @@ class NobleBlocksOAuthProvider(
                     client_id=data["client_id"],
                     scopes=data.get("scopes", []),
                     expires_at=expires_ts,
-                    resource=AnyHttpUrl(data["resource"]) if data.get("resource") else None,
+                    resource=str(data["resource"]) if data.get("resource") else None,
                 )
                 self._access_tokens[token_str] = at
                 return at
