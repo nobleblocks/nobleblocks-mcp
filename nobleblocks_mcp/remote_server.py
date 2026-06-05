@@ -2,7 +2,7 @@
 NobleBlocks Remote MCP Server — Streamable HTTP + OAuth 2.1
 ============================================================
 
-This is the server that gets deployed at https://mcp.nobleblocks.com/mcp
+This is the server that gets deployed at https://mcp.nobleblocks.com
 for listing in the Claude Connectors Directory.
 
 Users connect by clicking "Connect" in Claude → redirected to NobleBlocks
@@ -81,7 +81,7 @@ mcp = FastMCP(
     ),
     host=HOST,
     port=PORT,
-    streamable_http_path="/mcp",
+    streamable_http_path="/",
 )
 
 
@@ -734,7 +734,7 @@ def main():
     """Run the remote MCP server."""
     import uvicorn
     logger.info(
-        "NobleBlocks MCP v2.0.0 (Remote) | API: %s | URL: %s:%d/mcp",
+        "NobleBlocks MCP v2.0.0 (Remote) | API: %s | URL: %s:%d",
         NB_API_BASE, HOST, PORT,
     )
     uvicorn.run(app, host=HOST, port=PORT)
