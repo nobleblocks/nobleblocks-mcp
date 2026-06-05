@@ -9,7 +9,6 @@ build/
 .env.example
 .venv/
 venv/
-scripts/deploy_*.py
 *.whl
 *.tar.gz
 mcp-registry-key.pem
