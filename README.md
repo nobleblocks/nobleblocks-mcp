@@ -8,9 +8,9 @@
   <a href="https://www.nobleblocks.com"><img src="https://img.shields.io/badge/papers-340M%2B-orange" alt="Papers"></a>
 </p>
 
-Search 340 million deduplicated academic papers from Claude Desktop, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, Europe PMC, Crossref, bioRxiv, ClinicalTrials.gov, and more.
+Search 340 million deduplicated academic papers from Claude Desktop, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, Europe PMC, Crossref, bioRxiv, ClinicalTrials.gov, and many other sources — all cross-linked through a biomedical knowledge graph with 1.3M+ entities and 109M+ paper connections.
 
-This is a thin authenticated client — all indexing, ranking, and vector search runs on the NobleBlocks backend. You get fast results without managing any infrastructure.
+This is a thin authenticated client — all indexing, ranking, vector search, and knowledge graph traversal runs on the NobleBlocks backend. You get fast results without managing any infrastructure.
 
 ---
 

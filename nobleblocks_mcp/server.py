@@ -230,11 +230,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_papers",
             description=(
-                "Full-text search across 340M+ academic papers from PubMed, OpenAlex, "
-                "SemanticScholar, arXiv, EuropePMC, and Scopus. Returns ranked results "
-                "with title, authors, year, abstract, citations, and DOI. "
-                "Use this when the user asks about scientific topics, medical research, "
-                "or wants to find papers on any subject."
+                "Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of "
+                "other sources. Returns ranked results with title, authors, year, abstract, "
+                "citations, and DOI. Use this when the user asks about research, studies, "
+                "evidence, or wants to find scientific papers on any topic."
             ),
             inputSchema={
                 "type": "object",
@@ -399,10 +398,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_by_entity",
             description=(
-                "Search the biomedical knowledge graph by entity — find papers "
-                "linked to a specific gene, drug, disease, institution, researcher, "
-                "or topic. Returns the entity's connections and top papers. "
-                "Unique to NobleBlocks: 1.3M+ entities with 109M+ paper links."
+                "Explore the NobleBlocks knowledge graph — find connections between "
+                "genes, drugs, diseases, institutions, researchers, and topics. "
+                "See which papers link entities together and discover hidden relationships "
+                "across 1.3M+ entities and 109M+ paper connections."
             ),
             inputSchema={
                 "type": "object",

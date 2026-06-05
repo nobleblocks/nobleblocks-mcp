@@ -2,7 +2,7 @@
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "io.github.nobleblocks/nobleblocks-mcp",
     "title": "NobleBlocks Academic Papers",
-    "description": "Search 340M+ academic papers from your AI assistant. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Tools: search papers, find similar, citation graphs, and AI-powered literature reviews.",
+    "description": "Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of other sources — backed by a biomedical knowledge graph with 1.3M+ entities. Ask research questions in plain language, explore citation networks, find related papers, and generate literature reviews instantly.",
     "repository": {
         "url": "https://github.com/nobleblocks/nobleblocks-mcp",
         "source": "github"

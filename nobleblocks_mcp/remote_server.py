@@ -6,7 +6,7 @@ This is the server that gets deployed at https://mcp.nobleblocks.com/mcp
 for listing in the Claude Connectors Directory.
 
 Users connect by clicking "Connect" in Claude → redirected to NobleBlocks
-login → authenticated → Claude can search 300M+ papers on behalf of the user.
+login → authenticated → Claude can search 340M+ papers on behalf of the user.
 
 Run locally:  python -m nobleblocks_mcp.remote_server
 Deploy:       Docker → ECS (see Dockerfile.remote)
@@ -60,10 +60,12 @@ oauth_provider = NobleBlocksOAuthProvider()
 mcp = FastMCP(
     name="NobleBlocks",
     instructions=(
-        "NobleBlocks gives you access to 300M+ academic papers from PubMed, "
-        "OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. "
+        "NobleBlocks gives you access to 340M+ academic papers from PubMed, "
+        "arXiv, Crossref, and dozens of other sources — plus a biomedical knowledge "
+        "graph with 1.3M+ entities (genes, drugs, diseases, institutions). "
         "Use the search tool for any research question. Use find_similar to "
-        "discover related work. Use get_citation_graph for impact analysis."
+        "discover related work. Use get_citation_graph for impact analysis. "
+        "Use search_by_entity to explore connections in the knowledge graph."
     ),
     auth_server_provider=oauth_provider,
     auth=AuthSettings(
