@@ -350,6 +350,8 @@ CONSENT_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connect NobleBlocks to {client_name}</title>
+  <link rel="icon" type="image/x-icon" href="https://www.nobleblocks.com/favicon.ico">
+  <link rel="apple-touch-icon" href="https://www.nobleblocks.com/favicon.png">
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -657,6 +659,14 @@ async def oauth_login_google(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Internal error"}, status_code=500)
 
 
+FAVICON_URL = "https://www.nobleblocks.com/favicon.ico"
+
+
+async def favicon(request: Request) -> RedirectResponse:
+    """Serve the NobleBlocks favicon (used by browsers for the tab icon)."""
+    return RedirectResponse(url=FAVICON_URL, status_code=301)
+
+
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint for ALB/ECS."""
     return JSONResponse({
@@ -671,6 +681,8 @@ async def info_page(request: Request) -> HTMLResponse:
     """Root page with info about the MCP server."""
     return HTMLResponse("""<!DOCTYPE html>
 <html><head><title>NobleBlocks MCP Server</title>
+<link rel="icon" type="image/x-icon" href="https://www.nobleblocks.com/favicon.ico">
+<link rel="apple-touch-icon" href="https://www.nobleblocks.com/favicon.png">
 <style>body{font-family:system-ui;max-width:600px;margin:60px auto;padding:20px;color:#1a1a2e}
 h1{margin-bottom:8px}p{color:#475569;line-height:1.6}.url{background:#f1f5f9;padding:8px 16px;
 border-radius:8px;font-family:monospace;font-size:14px;margin:16px 0;display:block}
@@ -702,6 +714,7 @@ def create_app() -> Starlette:
     custom_routes = [
         Route("/", info_page, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
+        Route("/favicon.ico", favicon, methods=["GET"]),
         Route("/consent", consent_page, methods=["GET"]),
         Route("/oauth/login", oauth_login, methods=["POST"]),
         Route("/oauth/login/google", oauth_login_google, methods=["POST"]),

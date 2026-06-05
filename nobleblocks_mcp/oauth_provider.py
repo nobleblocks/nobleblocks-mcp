@@ -352,7 +352,7 @@ class NobleBlocksOAuthProvider(
         # Verify the NB access token is valid
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{NB_API_BASE}/api/v1/user/me",
+                f"{NB_API_BASE}/api/v1/user/2fa/status",
                 headers={"Authorization": f"Bearer {nb_access_token}"},
             )
             if resp.status_code != 200:
