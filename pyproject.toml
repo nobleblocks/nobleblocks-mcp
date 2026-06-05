@@ -43,6 +43,3 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nobleblocks_mcp"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"nobleblocks_mcp/static" = "nobleblocks_mcp/static"
