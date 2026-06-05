@@ -50,6 +50,12 @@ WARMUP_QUERIES = [
     # Broad single-word terms (these cause the worst cold GIN scans)
     "AI", "biology", "chemistry", "physics", "mathematics",
     "engineering", "medicine", "genetics", "ecology", "robotics",
+    # Terms that caused cold-cache failures in stress tests
+    "transformer", "large language models", "IL-6 inflammation",
+    "chimeric antigen receptor T cell", "photosynthesis", "graphene",
+    "autonomous vehicles", "perimenopause", "β-amyloid plaque",
+    "mRNA vaccine technology", "HER2 breast cancer", "epigenetics",
+    "attention mechanism neural networks", "quantum computing error correction",
 ]
 
 
