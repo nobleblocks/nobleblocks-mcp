@@ -515,6 +515,7 @@ async def consent_page(request: Request) -> HTMLResponse:
 
 async def oauth_login(request: Request) -> JSONResponse:
     """Handle login form submission — authenticate with NB backend, complete OAuth."""
+    from mcp.server.auth.errors import AuthorizeError
     try:
         body = await request.json()
         email = body.get("email", "").strip()
@@ -525,7 +526,7 @@ async def oauth_login(request: Request) -> JSONResponse:
             return JSONResponse({"error": "Missing required fields"}, status_code=400)
 
         # Authenticate against NobleBlocks backend
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{NB_API_BASE}/api/v1/auth/login_with_email",
                 json={"email": email, "password": password},
@@ -546,6 +547,12 @@ async def oauth_login(request: Request) -> JSONResponse:
         redirect_url = await oauth_provider.complete_authorization(auth_state, nb_token)
         return JSONResponse({"redirect_url": redirect_url})
 
+    except AuthorizeError as e:
+        logger.warning("OAuth login AuthorizeError: %s", e.error_description)
+        return JSONResponse(
+            {"error": e.error_description or "Authorization session expired. Please try again."},
+            status_code=400,
+        )
     except Exception as e:
         logger.exception("OAuth login error")
         return JSONResponse({"error": "Internal error"}, status_code=500)
@@ -553,6 +560,7 @@ async def oauth_login(request: Request) -> JSONResponse:
 
 async def oauth_login_google(request: Request) -> JSONResponse:
     """Handle Google login — exchange Google access token for NB token, complete OAuth."""
+    from mcp.server.auth.errors import AuthorizeError
     try:
         body = await request.json()
         access_token = body.get("access_token", "").strip()
@@ -562,7 +570,7 @@ async def oauth_login_google(request: Request) -> JSONResponse:
             return JSONResponse({"error": "Missing required fields"}, status_code=400)
 
         # Authenticate against NobleBlocks backend with Google token
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{NB_API_BASE}/api/v1/auth/login_with_google",
                 json={"accessToken": access_token},
@@ -575,6 +583,7 @@ async def oauth_login_google(request: Request) -> JSONResponse:
                         error_msg = err_data["message"]
                 except Exception:
                     pass
+                logger.warning("Google login backend error: status=%d msg=%s", resp.status_code, error_msg)
                 return JSONResponse({"error": error_msg}, status_code=401)
             login_data = resp.json()
             token_obj = login_data.get("token", {})
@@ -587,6 +596,12 @@ async def oauth_login_google(request: Request) -> JSONResponse:
         redirect_url = await oauth_provider.complete_authorization(auth_state, nb_token)
         return JSONResponse({"redirect_url": redirect_url})
 
+    except AuthorizeError as e:
+        logger.warning("OAuth Google login AuthorizeError: %s", e.error_description)
+        return JSONResponse(
+            {"error": e.error_description or "Authorization session expired. Please try again."},
+            status_code=400,
+        )
     except Exception as e:
         logger.exception("OAuth Google login error")
         return JSONResponse({"error": "Internal error"}, status_code=500)
