@@ -201,6 +201,7 @@ async def search_papers(
         {
             "query": query,
             "limit": min(limit, 50),
+            "phase": "fast",
             "min_year": min_year,
             "max_year": max_year,
             "min_citations": min_citations,

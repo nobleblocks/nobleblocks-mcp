@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 API_BASE = "https://www.nobleblocks.com"
-HEADERS = {"User-Agent": "nobleblocks-mcp/2.0.0", "Accept": "application/json"}
+HEADERS = {
+    "User-Agent": "nobleblocks-mcp/2.0.0",
+    "Accept": "application/json",
+    "x-internal-token": "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu",
+}
 TIMEOUT = 30.0
 MAX_CONCURRENT = 5  # Don't overwhelm prod
 
@@ -171,7 +175,7 @@ class TestSummary:
 async def test_search(client: httpx.AsyncClient, query: str, params: dict) -> TestResult:
     """Test /api/v1/papers/search"""
     start = time.time()
-    all_params = {"query": query, "limit": params.get("limit", 10), **params}
+    all_params = {"query": query, "limit": params.get("limit", 10), "phase": "fast", **params}
     try:
         resp = await client.get(f"{API_BASE}/api/v1/papers/search", params={k: v for k, v in all_params.items() if v is not None})
         latency = time.time() - start
