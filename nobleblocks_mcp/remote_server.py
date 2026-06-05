@@ -536,7 +536,8 @@ async def oauth_login(request: Request) -> JSONResponse:
                     status_code=401,
                 )
             login_data = resp.json()
-            nb_token = login_data.get("accessToken") or login_data.get("access_token", "")
+            token_obj = login_data.get("token", {})
+            nb_token = token_obj.get("token", "") if isinstance(token_obj, dict) else ""
 
         if not nb_token:
             return JSONResponse({"error": "Login succeeded but no token received"}, status_code=500)
@@ -576,7 +577,8 @@ async def oauth_login_google(request: Request) -> JSONResponse:
                     pass
                 return JSONResponse({"error": error_msg}, status_code=401)
             login_data = resp.json()
-            nb_token = login_data.get("accessToken") or login_data.get("access_token", "")
+            token_obj = login_data.get("token", {})
+            nb_token = token_obj.get("token", "") if isinstance(token_obj, dict) else ""
 
         if not nb_token:
             return JSONResponse({"error": "Login succeeded but no token received"}, status_code=500)
