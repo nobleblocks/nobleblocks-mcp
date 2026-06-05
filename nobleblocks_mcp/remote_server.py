@@ -175,7 +175,7 @@ async def search_papers(
     source: str | None = None,
     sort: str = "relevance",
 ) -> str:
-    """Search 300M+ academic papers from PubMed, OpenAlex, Semantic Scholar, arXiv, EuropePMC, and Scopus. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
+    """Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
     query = sanitize_input(query)
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
@@ -334,7 +334,7 @@ CONSENT_HTML = """<!DOCTYPE html>
   <div class="card">
     <div class="logo">NB</div>
     <h1>Connect NobleBlocks to {client_name}</h1>
-    <p class="subtitle">Search 300M+ academic papers directly from {client_name}</p>
+    <p class="subtitle">Search 340M+ academic papers directly from {client_name}</p>
 
     <div class="scope">
       <h3>This will allow {client_name} to:</h3>
@@ -461,7 +461,7 @@ async def health_check(request: Request) -> JSONResponse:
         "status": "healthy",
         "service": "nobleblocks-mcp",
         "version": "2.0.0",
-        "papers": "300M+",
+        "papers": "340M+",
     })
 
 
@@ -475,7 +475,7 @@ border-radius:8px;font-family:monospace;font-size:14px;margin:16px 0;display:blo
 a{color:#6366f1}</style></head>
 <body>
 <h1>NobleBlocks MCP Server</h1>
-<p>Search 300M+ academic papers from Claude, ChatGPT, Cursor, and other AI assistants.</p>
+<p>Search 340M+ academic papers from Claude, ChatGPT, Cursor, and other AI assistants.</p>
 <span class="url">Connector URL: https://mcp.nobleblocks.com/mcp</span>
 <p><strong>How to connect:</strong></p>
 <ol style="color:#475569;line-height:2">
