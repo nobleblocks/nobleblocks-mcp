@@ -5,6 +5,7 @@ WORKDIR /app
 # Install dependencies
 COPY pyproject.toml README.md ./
 COPY nobleblocks_mcp/ nobleblocks_mcp/
+COPY static/ static/
 RUN pip install --no-cache-dir .
 
 # Non-root user

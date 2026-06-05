@@ -32,6 +32,7 @@ from starlette.routing import Route, Mount
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AuthorizationParams
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
+from mcp.types import Icon
 from nobleblocks_mcp.oauth_provider import NobleBlocksOAuthProvider
 
 load_dotenv()
@@ -60,14 +61,20 @@ oauth_provider = NobleBlocksOAuthProvider()
 mcp = FastMCP(
     name="NobleBlocks",
     instructions=(
-        "NobleBlocks gives you access to 340M+ academic papers from PubMed, "
-        "arXiv, Crossref, and dozens of other sources — plus a knowledge graph "
-        "with 1.3M+ entities (genes, drugs, diseases, institutions). "
-        "Use search_papers for any research question. Use find_similar to "
-        "discover related work. Use get_paper to fetch full metadata for a "
-        "specific paper. Use get_citation_graph for impact analysis. "
-        "Use search_by_entity to explore connections in the knowledge graph."
+        "NobleBlocks is the research MCP for academic discovery. "
+        "Connect directly to 340M+ peer-reviewed papers from PubMed, arXiv, "
+        "Crossref, Semantic Scholar, and dozens of other sources — plus a "
+        "knowledge graph with 1.3M+ entities (genes, drugs, diseases, "
+        "institutions, and concepts) and 109M+ paper connections.\n\n"
+        "Use search_papers to find papers on any research question. "
+        "Use find_similar to discover semantically related work via vector embeddings. "
+        "Use get_paper to fetch full metadata for a specific paper by DOI, PMID, or arXiv ID. "
+        "Use get_citation_graph to explore the citation network of a paper. "
+        "Use search_by_entity to explore connections between genes, drugs, diseases, "
+        "and institutions in the knowledge graph."
     ),
+    icons=[Icon(src=f"{MCP_BASE_URL}/icon.png")],
+    website_url="https://www.nobleblocks.com",
     auth_server_provider=oauth_provider,
     auth=AuthSettings(
         issuer_url=MCP_BASE_URL,
@@ -661,10 +668,29 @@ async def oauth_login_google(request: Request) -> JSONResponse:
 
 FAVICON_URL = "https://www.nobleblocks.com/favicon.ico"
 
+# Load icon bytes at startup for fast serving
+import pathlib
+_STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
+_ICON_BYTES = (_STATIC_DIR / "icon.png").read_bytes() if (_STATIC_DIR / "icon.png").exists() else None
+_ICON_64_BYTES = (_STATIC_DIR / "favicon-64.png").read_bytes() if (_STATIC_DIR / "favicon-64.png").exists() else None
 
-async def favicon(request: Request) -> RedirectResponse:
-    """Serve the NobleBlocks favicon (used by browsers for the tab icon)."""
+
+async def favicon(request: Request):
+    """Serve the NobleBlocks favicon."""
+    if _ICON_64_BYTES:
+        from starlette.responses import Response
+        return Response(content=_ICON_64_BYTES, media_type="image/png",
+                       headers={"Cache-Control": "public, max-age=86400"})
     return RedirectResponse(url=FAVICON_URL, status_code=301)
+
+
+async def icon_png(request: Request):
+    """Serve the NobleBlocks icon (used by MCP clients for server branding)."""
+    if _ICON_BYTES:
+        from starlette.responses import Response
+        return Response(content=_ICON_BYTES, media_type="image/png",
+                       headers={"Cache-Control": "public, max-age=86400"})
+    return RedirectResponse(url="https://www.nobleblocks.com/favicon.png", status_code=301)
 
 
 async def health_check(request: Request) -> JSONResponse:
@@ -715,6 +741,7 @@ def create_app() -> Starlette:
         Route("/", info_page, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
         Route("/favicon.ico", favicon, methods=["GET"]),
+        Route("/icon.png", icon_png, methods=["GET"]),
         Route("/consent", consent_page, methods=["GET"]),
         Route("/oauth/login", oauth_login, methods=["POST"]),
         Route("/oauth/login/google", oauth_login_google, methods=["POST"]),
