@@ -34,6 +34,7 @@ import re
 import sys
 import json
 import time
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,24 +185,37 @@ def _headers() -> dict[str, str]:
 
 
 async def _get(path: str, params: dict[str, Any]) -> dict:
-    """GET request with error wrapping."""
+    """GET request with error wrapping and retry on 502/503/504."""
     url = f"{API_BASE}{path}"
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_headers()) as client:
-        resp = await client.get(url, params={k: v for k, v in params.items() if v is not None})
-        if resp.status_code == 401:
-            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if body.get("trial_expired"):
-                raise RuntimeError(body.get("error", "Trial expired. Sign up at https://www.nobleblocks.com/auth/register"))
-            raise RuntimeError("Invalid API key. Get one at https://www.nobleblocks.com/settings/api-keys")
-        if resp.status_code == 429:
-            raise RuntimeError(
-                "Rate limit exceeded. Free tier = 100 queries/day. "
-                "Set NOBLEBLOCKS_API_KEY for Pro access."
-            )
-        if resp.status_code == 403:
-            raise RuntimeError("Access denied. Your API key may not have permission for this resource.")
-        resp.raise_for_status()
-        return resp.json()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_headers()) as client:
+                resp = await client.get(url, params={k: v for k, v in params.items() if v is not None})
+                if resp.status_code in (502, 503, 504) and attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                if resp.status_code == 401:
+                    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    if body.get("trial_expired"):
+                        raise RuntimeError(body.get("error", "Trial expired. Sign up at https://www.nobleblocks.com/auth/register"))
+                    raise RuntimeError("Invalid API key. Get one at https://www.nobleblocks.com/settings/api-keys")
+                if resp.status_code == 429:
+                    raise RuntimeError(
+                        "Rate limit exceeded. Free tier = 100 queries/day. "
+                        "Set NOBLEBLOCKS_API_KEY for Pro access."
+                    )
+                if resp.status_code == 403:
+                    raise RuntimeError("Access denied. Your API key may not have permission for this resource.")
+                resp.raise_for_status()
+                return resp.json()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_exc = e
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise last_exc or RuntimeError("Request failed after retries")
 
 
 async def _post(path: str, body: dict[str, Any]) -> dict:
@@ -537,6 +551,7 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         {
             "query": query,
             "limit": min(int(args.get("limit", 10)), 50),
+            "phase": "fast",
             "min_year": args.get("min_year"),
             "max_year": args.get("max_year"),
             "min_citations": args.get("min_citations"),
@@ -574,19 +589,33 @@ async def _tool_find_similar(args: dict[str, Any]) -> dict:
     if len(query) < 5:
         raise ValueError("Query must be at least 5 characters for similarity search")
 
-    data = await _get(
-        "/api/v1/papers/similar",
-        {
+    try:
+        data = await _get(
+            "/api/v1/papers/similar",
+            {
+                "query": query,
+                "limit": min(int(args.get("limit", 10)), 30),
+            },
+        )
+        papers = data.get("papers") or data.get("results") or []
+        return {
             "query": query,
-            "limit": min(int(args.get("limit", 10)), 30),
-        },
-    )
-    papers = data.get("papers") or data.get("results") or []
-    return {
-        "query": query,
-        "results": [_compact_paper(p) for p in papers],
-        "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
-    }
+            "results": [_compact_paper(p) for p in papers],
+            "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
+        }
+    except Exception:
+        # Fallback: use text search sorted by relevance when vector search unavailable
+        data = await _get(
+            "/api/v1/papers/search",
+            {"query": query, "limit": min(int(args.get("limit", 10)), 30), "phase": "fast", "sort": "relevance"},
+        )
+        papers = data.get("papers") or data.get("results") or []
+        return {
+            "query": query,
+            "results": [_compact_paper(p) for p in papers],
+            "note": "Used relevance-ranked text search (vector search temporarily unavailable)",
+            "attribution": "Powered by NobleBlocks (nobleblocks.com)",
+        }
 
 
 async def _tool_get_citation_graph(args: dict[str, Any]) -> dict:

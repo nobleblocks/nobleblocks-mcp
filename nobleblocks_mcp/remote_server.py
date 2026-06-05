@@ -18,6 +18,7 @@ import os
 import re
 import json
 import time
+import asyncio
 import logging
 from typing import Any
 from contextlib import asynccontextmanager
@@ -114,10 +115,24 @@ def _headers(api_key: str = "") -> dict[str, str]:
 
 async def _api_get(path: str, params: dict[str, Any], api_key: str = "") -> dict:
     url = f"{NB_API_BASE}{path}"
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_headers(api_key)) as client:
-        resp = await client.get(url, params={k: v for k, v in params.items() if v is not None})
-        resp.raise_for_status()
-        return resp.json()
+    # Retry on 502/503/504 (connection saturation / paper-db overload)
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, headers=_headers(api_key)) as client:
+                resp = await client.get(url, params={k: v for k, v in params.items() if v is not None})
+                if resp.status_code in (502, 503, 504) and attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_exc = e
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise last_exc or RuntimeError("Request failed after retries")
 
 
 async def _api_post(path: str, body: dict[str, Any], api_key: str = "") -> dict:
