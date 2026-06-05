@@ -2,7 +2,7 @@
 NobleBlocks MCP Server — Production Grade
 ==========================================
 
-Exposes the NobleBlocks paper search corpus (300M+ papers across PubMed,
+Exposes the NobleBlocks paper search corpus (340M+ papers across PubMed,
 OpenAlex, SemanticScholar, arXiv, EuropePMC, Scopus) to AI tools that speak
 the Model Context Protocol — Claude Desktop, ChatGPT (via MCP bridges),
 Cursor, VS Code Copilot, etc.
@@ -230,7 +230,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_papers",
             description=(
-                "Full-text search across 300M+ academic papers from PubMed, OpenAlex, "
+                "Full-text search across 340M+ academic papers from PubMed, OpenAlex, "
                 "SemanticScholar, arXiv, EuropePMC, and Scopus. Returns ranked results "
                 "with title, authors, year, abstract, citations, and DOI. "
                 "Use this when the user asks about scientific topics, medical research, "
@@ -514,7 +514,7 @@ def _sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
 # ─── Tool implementations ──────────────────────────────────────────────────────
 
 async def _tool_search_papers(args: dict[str, Any]) -> dict:
-    """Search 300M+ papers."""
+    """Search 340M+ papers."""
     query = args.get("query", "")
     if len(query) < 2:
         raise ValueError("Query must be at least 2 characters")
@@ -537,7 +537,7 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         "query": query,
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:limit]],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 300M+ papers across 6 academic databases",
+        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 340M+ papers across 6 academic databases",
     }
 
 

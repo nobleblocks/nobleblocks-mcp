@@ -1,0 +1,23 @@
+[Unit]
+Description=Patent Data Refresh — daily ingestion of new patents and citations
+After=postgresql.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/nobleblocks/paper-db/patent-ingestors
+Environment=DB_PASS=nb_papers_2026_prod
+Environment=DB_HOST=localhost
+Environment=DB_NAME=paper_search
+Environment=DB_USER=nobleblocks
+# EPO credentials (set after user registers)
+# Environment=EPO_CONSUMER_KEY=xxx
+# Environment=EPO_CONSUMER_SECRET=xxx
+ExecStart=/usr/bin/python3 /opt/nobleblocks/paper-db/patent-ingestors/patent_refresh_orchestrator.py --source all
+TimeoutStartSec=7200
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

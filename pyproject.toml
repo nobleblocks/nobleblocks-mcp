@@ -1,7 +1,7 @@
 [project]
 name = "nobleblocks-mcp"
 version = "2.0.0"
-description = "MCP server exposing NobleBlocks 300M+ paper search to Claude Desktop, ChatGPT, Cursor, and other AI tools"
+description = "MCP server exposing NobleBlocks 340M+ paper search to Claude Desktop, ChatGPT, Cursor, and other AI tools"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "NobleBlocks", email = "info@nobleblocks.com"}]

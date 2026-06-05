@@ -5,10 +5,10 @@
 <p align="center">
   <a href="https://pypi.org/project/nobleblocks-mcp/"><img src="https://img.shields.io/pypi/v/nobleblocks-mcp.svg" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
-  <a href="https://www.nobleblocks.com"><img src="https://img.shields.io/badge/papers-300M%2B-orange" alt="Papers"></a>
+  <a href="https://www.nobleblocks.com"><img src="https://img.shields.io/badge/papers-340M%2B-orange" alt="Papers"></a>
 </p>
 
-Search 300 million deduplicated academic papers from Claude Desktop, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, Europe PMC, Crossref, bioRxiv, ClinicalTrials.gov, and more.
+Search 340 million deduplicated academic papers from Claude Desktop, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, Europe PMC, Crossref, bioRxiv, ClinicalTrials.gov, and more.
 
 This is a thin authenticated client — all indexing, ranking, and vector search runs on the NobleBlocks backend. You get fast results without managing any infrastructure.
 
@@ -27,7 +27,7 @@ This is a thin authenticated client — all indexing, ranking, and vector search
 | bioRxiv / medRxiv | ~1K/day | Daily |
 | ClinicalTrials.gov | ~582K trials | Daily |
 
-All sources are cross-deduplicated on DOI, PMID, and arXiv ID. Total unique records after dedup: **300M+** (May 2026).
+All sources are cross-deduplicated on DOI, PMID, and arXiv ID. Total unique records after dedup: **340M+** (June 2026).
 
 ## Knowledge graph
 
