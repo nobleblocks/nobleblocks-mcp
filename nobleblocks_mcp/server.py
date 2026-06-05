@@ -223,6 +223,14 @@ async def _post(path: str, body: dict[str, Any]) -> dict:
 server = Server("nobleblocks")
 
 
+TOOL_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """Return the tools this server exposes."""
@@ -235,6 +243,7 @@ async def list_tools() -> list[Tool]:
                 "citations, and DOI. Use this when the user asks about research, studies, "
                 "evidence, or wants to find scientific papers on any topic."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -287,6 +296,7 @@ async def list_tools() -> list[Tool]:
                 "Returns title, authors, abstract, year, DOI, citation count, "
                 "and PDF link when available."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -311,6 +321,7 @@ async def list_tools() -> list[Tool]:
                 "discovers conceptually related work. Provide a paper title, abstract "
                 "snippet, or research question as the query."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -337,6 +348,7 @@ async def list_tools() -> list[Tool]:
                 "and who cites it (citing papers). Useful for understanding a paper's "
                 "impact and finding the foundational work in a field."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -370,6 +382,7 @@ async def list_tools() -> list[Tool]:
                 "review with inline citations. Costs credits from the user's "
                 "NobleBlocks account. Requires a Pro API key."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -403,6 +416,7 @@ async def list_tools() -> list[Tool]:
                 "See which papers link entities together and discover hidden relationships "
                 "across 1.3M+ entities and 109M+ paper connections."
             ),
+            annotations=TOOL_ANNOTATIONS,
             inputSchema={
                 "type": "object",
                 "properties": {
