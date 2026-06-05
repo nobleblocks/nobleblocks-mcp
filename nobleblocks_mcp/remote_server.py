@@ -61,10 +61,11 @@ mcp = FastMCP(
     name="NobleBlocks",
     instructions=(
         "NobleBlocks gives you access to 340M+ academic papers from PubMed, "
-        "arXiv, Crossref, and dozens of other sources — plus a biomedical knowledge "
-        "graph with 1.3M+ entities (genes, drugs, diseases, institutions). "
-        "Use the search tool for any research question. Use find_similar to "
-        "discover related work. Use get_citation_graph for impact analysis. "
+        "arXiv, Crossref, and dozens of other sources — plus a knowledge graph "
+        "with 1.3M+ entities (genes, drugs, diseases, institutions). "
+        "Use search_papers for any research question. Use find_similar to "
+        "discover related work. Use get_paper to fetch full metadata for a "
+        "specific paper. Use get_citation_graph for impact analysis. "
         "Use search_by_entity to explore connections in the knowledge graph."
     ),
     auth_server_provider=oauth_provider,
@@ -288,6 +289,55 @@ async def get_citation_graph(
     if direction in ("citations", "both"):
         result["citations"] = [_compact_paper(p) for p in (data.get("citations") or [])[:limit]]
     result["attribution"] = "Powered by NobleBlocks (nobleblocks.com)"
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Search Knowledge Graph",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def search_by_entity(
+    query: str,
+    max_nodes: int = 20,
+) -> str:
+    """Explore the NobleBlocks knowledge graph — find connections between genes,
+    drugs, diseases, institutions, and concepts. Discover which papers link
+    entities together across 1.3M+ entities and 109M+ paper connections."""
+    query = sanitize_input(query, MAX_QUERY_LENGTH)
+    if len(query) < 2:
+        return json.dumps({"error": "Query must be at least 2 characters"})
+
+    max_nodes = max(10, min(max_nodes, 50))
+    data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": max_nodes})
+
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+    entities = []
+    papers = []
+    for node in nodes:
+        if node.get("type") == "entity":
+            entities.append({
+                "name": node.get("name"),
+                "entity_type": node.get("entityType"),
+                "description": node.get("description"),
+            })
+        elif node.get("type") == "paper":
+            papers.append(_compact_paper(node))
+
+    result = {
+        "query": query,
+        "entities_found": len(entities),
+        "papers_found": len(papers),
+        "entities": entities[:20],
+        "papers": papers[:20],
+        "relationships": len(edges),
+        "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — 1.3M+ entities, 109M+ links",
+    }
     return json.dumps(result, indent=2, default=str)
 
 
@@ -573,7 +623,7 @@ async def oauth_login_google(request: Request) -> JSONResponse:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 f"{NB_API_BASE}/api/v1/auth/login_with_google",
-                json={"accessToken": access_token},
+                json={"accessToken": access_token, "role": "Guest"},
             )
             if resp.status_code != 200:
                 error_msg = "Google authentication failed"
