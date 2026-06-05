@@ -1,14 +1,14 @@
 # NobleBlocks MCP Server
 
-<!-- mcp-name: io.github.nobleblocks/nobleblocks-mcp -->
+<!-- mcp-name: com.nobleblocks/nobleblocks-mcp -->
 
 <p align="center">
-  <a href="https://pypi.org/project/nobleblocks-mcp/"><img src="https://img.shields.io/pypi/v/nobleblocks-mcp.svg" alt="PyPI"></a>
+  <a href="https://registry.modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP_Registry-listed-brightgreen" alt="MCP Registry"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="https://www.nobleblocks.com"><img src="https://img.shields.io/badge/papers-340M%2B-orange" alt="Papers"></a>
 </p>
 
-Search 340 million deduplicated academic papers from Claude Desktop, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers PubMed, OpenAlex, Semantic Scholar, arXiv, Europe PMC, Crossref, bioRxiv, ClinicalTrials.gov, and many other sources — all cross-linked through a biomedical knowledge graph with 1.3M+ entities and 109M+ paper connections.
+Search 340 million deduplicated academic papers from Claude Desktop, Claude Web, ChatGPT, Cursor, VS Code Copilot, or any MCP-compatible tool. Covers 15+ academic databases — all cross-linked through a biomedical knowledge graph with 1.3M+ entities and 109M+ paper connections.
 
 This is a thin authenticated client — all indexing, ranking, vector search, and knowledge graph traversal runs on the NobleBlocks backend. You get fast results without managing any infrastructure.
 
@@ -26,6 +26,15 @@ This is a thin authenticated client — all indexing, ranking, vector search, an
 | arXiv | ~2.5M preprints | Daily |
 | bioRxiv / medRxiv | ~1K/day | Daily |
 | ClinicalTrials.gov | ~582K trials | Daily |
+| Unpaywall | OA link resolution | Daily |
+| DBLP | Computer science | Via OpenAlex |
+| CORE | ~37M open access outputs | Coming soon |
+| BASE (Bielefeld) | Discovery metadata | Via OpenAlex |
+| DOAJ | Open access journals | Via Crossref |
+| Papers with Code | ML/AI benchmarks | Weekly |
+| Retraction Watch | Retraction status | Weekly |
+| USPTO / EPO patents | ~9.3M patent-paper links | Daily |
+| …and others | | |
 
 All sources are cross-deduplicated on DOI, PMID, and arXiv ID. Total unique records after dedup: **340M+** (June 2026).
 
@@ -39,8 +48,8 @@ The search backend also maintains a biomedical knowledge graph (1.3M+ entities, 
 |------|-------------|
 | `search_papers` | Full-text + semantic hybrid search with year/citation/source filters |
 | `get_paper` | Fetch metadata by DOI, PMID, arXiv ID, or OpenAlex ID |
-| `find_similar` | Vector-embedding similarity (768-dim, HNSW) |
-| `get_citation_graph` | Pre-computed citation network — references and citing papers |
+| `find_similar` | Find papers related by meaning, not just keyword matching |
+| `get_citation_graph` | Citation network — references and citing papers |
 | `search_by_entity` | Find papers linked to a gene, drug, disease, or institution via the KG |
 | `create_literature_review` | AI-generated structured lit review with citations (Pro) |
 
