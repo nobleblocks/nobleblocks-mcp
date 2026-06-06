@@ -120,8 +120,7 @@ class RateLimiter:
             if len(trial_bucket) >= RATE_LIMIT_TRIAL:
                 return False, (
                     f"Daily limit reached ({RATE_LIMIT_TRIAL} queries/day). "
-                    f"For unlimited access, generate an API key at {API_KEY_URL} "
-                    f"and set NOBLEBLOCKS_API_KEY in your MCP config."
+                    f"Upgrade to NobleBlocks Pro for unlimited access: {API_KEY_URL}"
                 )
             trial_bucket.append(now)
             self._daily["__trial__"] = trial_bucket
@@ -511,8 +510,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         trial_bucket = _rate_limiter._prune(trial_bucket, 86400)
         remaining = max(0, RATE_LIMIT_TRIAL - len(trial_bucket))
         trial_notice = (
-            f"ℹ️ Free tier — {remaining}/{RATE_LIMIT_TRIAL} queries remaining today. "
-            f"Get an API key for higher limits: {API_KEY_URL}\n\n"
+            f"ℹ️ {remaining}/{RATE_LIMIT_TRIAL} queries remaining today. "
+            f"Upgrade to NobleBlocks Pro for unlimited queries: {API_KEY_URL}\n\n"
         )
 
     try:
