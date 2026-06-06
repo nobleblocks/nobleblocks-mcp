@@ -745,9 +745,13 @@ async def _tool_create_literature_review(args: dict[str, Any]) -> dict:
             "Sign up at https://www.nobleblocks.com/pricing"
         )
 
-    topic = args.get("topic", "")
+    # Accept both "topic" and "query" (Claude sometimes sends "query")
+    topic = args.get("topic") or args.get("query", "")
     if len(topic) < 5:
         raise ValueError("Topic must be at least 5 characters")
+
+    # Accept both "num_papers" and "max_papers" (Claude sometimes sends "max_papers")
+    num_papers = int(args.get("num_papers") or args.get("max_papers", 15))
 
     data = await _post(
         "/api/v1/notebooks/from-search",
@@ -757,7 +761,7 @@ async def _tool_create_literature_review(args: dict[str, Any]) -> dict:
             "documentType": "literature_review",
             "maxWords": 2000,
             "tone": "academic",
-            "numPapers": min(int(args.get("num_papers", 15)), 50),
+            "numPapers": min(num_papers, 50),
             "style": args.get("style", "narrative"),
         },
     )
