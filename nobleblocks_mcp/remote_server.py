@@ -190,9 +190,9 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
         "title": title,
         "authors": authors,
         "year": p.get("year") or _extract_year(p.get("publicationDate") or p.get("publication_date")),
-        "doi": p.get("doi") or p.get("DOI") or (p.get("externalIds") or {}).get("DOI"),
+        "doi": p.get("doi") or p.get("DOI") or ((p.get("externalIds") or {}).get("DOI") if isinstance(p.get("externalIds"), dict) else None),
         "citations": citations,
-        "venue": p.get("venue") or p.get("source") or (p.get("journal") or {}).get("name"),
+        "venue": p.get("venue") or p.get("source") or (p.get("journal") if isinstance(p.get("journal"), str) else (p.get("journal") or {}).get("name")),
         "abstract": abstract,
         "url": _build_url(p),
     }
@@ -204,8 +204,13 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
 
 
 def _build_url(p: dict) -> str | None:
-    doi = p.get("doi") or p.get("DOI") or (p.get("externalIds") or {}).get("DOI")
-    return f"https://doi.org/{doi}" if doi else p.get("url")
+    doi = p.get("doi") or p.get("DOI") or ((p.get("externalIds") or {}).get("DOI") if isinstance(p.get("externalIds"), dict) else None)
+    if doi:
+        return f"https://doi.org/{doi}"
+    noble_id = p.get("nobleId") or p.get("noble_id")
+    if noble_id:
+        return f"https://www.nobleblocks.com/publications/{noble_id}"
+    return p.get("url")
 
 
 def _extract_year(date_str: str | None) -> int | None:
