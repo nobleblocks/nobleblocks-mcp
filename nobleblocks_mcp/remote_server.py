@@ -81,8 +81,10 @@ mcp = FastMCP(
     auth_server_provider=oauth_provider,
     auth=AuthSettings(
         issuer_url=MCP_BASE_URL,
-        service_documentation_url="https://www.nobleblocks.com/docs/mcp",
-        resource_server_url=f"{MCP_BASE_URL}/mcp",
+        # PROTECTED: resource_server_url MUST be base URL (no /mcp suffix).
+        # With /mcp suffix, SDK stops serving /.well-known/oauth-protected-resource at root → 404.
+        # Dual mount at /mcp and / ensures POST to both paths reaches the handler.
+        resource_server_url=MCP_BASE_URL,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
             valid_scopes=["search", "review", "graph"],
@@ -91,7 +93,9 @@ mcp = FastMCP(
     ),
     host=HOST,
     port=PORT,
-    streamable_http_path="/",  # PROTECTED: handles POST at sub-app root; mounted at both / and /mcp
+    # PROTECTED: streamable_http_path="/" means handler lives at sub-app root.
+    # With dual Mount("/mcp") + Mount("/"), both POST /mcp and POST / reach it.
+    streamable_http_path="/",
 )
 
 
@@ -866,14 +870,12 @@ def create_app() -> Starlette:
         Route("/register", register_shim, methods=["POST"]),  # shim: injects refresh_token for Claude
     ]
 
-    # Mount MCP app at both /mcp (connector URL) and / (fallback for clients
-    # that POST to root based on OAuth resource discovery). The custom GET route
-    # for / takes priority since Starlette matches method-specific routes first.
-    # PROTECTED: dual mount ensures both /mcp and / POST paths work.
+    # Mount MCP app at / — handles POST /, /.well-known/*, /authorize, /token, etc.
+    # PROTECTED: streamable_http_path="/" means handler lives at sub-app root.
+    # The /mcp path is handled by ASGI middleware that rewrites it to /.
     from starlette.routing import Mount
     routes = custom_routes + [
-        Mount("/mcp", app=mcp_app),   # connector URL — strips /mcp prefix
-        Mount("/", app=mcp_app),      # OAuth/well-known + fallback POST
+        Mount("/", app=mcp_app),      # OAuth/well-known + POST / handler
     ]
 
     # Forward the MCP session manager's lifespan so its task group initializes
@@ -882,7 +884,19 @@ def create_app() -> Starlette:
         async with mcp.session_manager.run():
             yield
 
-    return Starlette(routes=routes, lifespan=lifespan)
+    inner_app = Starlette(routes=routes, lifespan=lifespan)
+
+    # ASGI middleware: rewrite /mcp → / so both connector URL paths work.
+    # PROTECTED: ensures POST /mcp reaches the same handler as POST /.
+    async def path_rewrite_middleware(scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
+            # Rewrite /mcp → / and /mcp/foo → /foo
+            path = scope["path"]
+            new_path = "/" + path[4:].lstrip("/") if len(path) > 4 else "/"
+            scope = dict(scope, path=new_path, raw_path=new_path.encode())
+        await inner_app(scope, receive, send)
+
+    return path_rewrite_middleware
 
 
 app = create_app()

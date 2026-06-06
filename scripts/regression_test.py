@@ -164,13 +164,14 @@ def static_checks() -> None:
         f"logo-icon width={min_size}px — must be ≥ 60px" if min_size < 60 else "",
     )
 
-    # resource_server_url MUST include /mcp — tells OAuth discovery the correct
-    # resource endpoint. Without it, clients POST to / and get 404.
-    # (Bug fixed 2026-06-06: was base URL only, caused "auth failed" in Claude)
+    # resource_server_url MUST be base URL (no /mcp suffix).
+    # With /mcp suffix, SDK stops serving /.well-known/oauth-protected-resource → 404.
+    # The dual mount (/mcp + /) handles both POST paths instead.
     check(
-        "remote_server.py: resource_server_url includes /mcp path",
-        'resource_server_url=f"{MCP_BASE_URL}/mcp"' in remote_text,
-        "BROKEN: resource_server_url missing /mcp — clients will POST to / (404)",
+        "remote_server.py: resource_server_url is base URL (no /mcp suffix)",
+        'resource_server_url=MCP_BASE_URL,' in remote_text and
+        'resource_server_url=f"{MCP_BASE_URL}/mcp"' not in remote_text,
+        "BROKEN: resource_server_url has /mcp — breaks /.well-known/oauth-protected-resource",
     )
 
     # streamable_http_path must be "/" with dual-mount at /mcp and / in create_app()
@@ -181,11 +182,11 @@ def static_checks() -> None:
         'MISSING streamable_http_path="/" — dual mount routing broken',
     )
 
-    # Dual mount: both Mount("/mcp", ...) and Mount("/", ...) must exist
+    # Dual mount: path rewrite middleware + Mount("/") must ensure both /mcp and / work
     check(
-        "remote_server.py: dual mount /mcp and / present",
-        'Mount("/mcp"' in remote_text and 'Mount("/"' in remote_text,
-        "MISSING dual mount — /mcp or / POST path will 404",
+        "remote_server.py: /mcp path rewrite middleware present",
+        'path_rewrite_middleware' in remote_text and '"/mcp"' in remote_text,
+        "MISSING /mcp path rewrite — POST /mcp will 404",
     )
 
     # OAuth endpoints must be registered
