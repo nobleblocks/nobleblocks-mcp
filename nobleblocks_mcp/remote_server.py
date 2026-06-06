@@ -245,9 +245,22 @@ async def search_papers(
     )
     papers = data.get("papers") or data.get("results") or []
 
-    # Fallback: if fast phase returned 0 results, retry with full search (slower but broader)
-    if not papers:
-        logger.info(f"[search_papers] fast phase empty for '{query}', retrying full search")
+    # Fallback: retry with full search if fast phase returned empty or low-quality results.
+    # "Low quality" = fewer than 30% of results mention any query keyword in the title.
+    def _results_are_relevant(papers_list: list, q: str) -> bool:
+        if not papers_list:
+            return False
+        keywords = [w.lower() for w in q.split() if len(w) >= 3]
+        if not keywords:
+            return True
+        relevant = sum(
+            1 for p in papers_list
+            if any(kw in (p.get("title") or "").lower() for kw in keywords)
+        )
+        return relevant >= max(1, len(papers_list) * 0.3)
+
+    if not _results_are_relevant(papers, query):
+        logger.info(f"[search_papers] fast phase low-relevance for '{query}' ({len(papers)} results), retrying full search")
         data = await _api_get(
             "/api/v1/papers/search",
             {
