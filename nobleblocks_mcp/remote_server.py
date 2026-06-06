@@ -82,7 +82,7 @@ mcp = FastMCP(
     auth=AuthSettings(
         issuer_url=MCP_BASE_URL,
         service_documentation_url="https://www.nobleblocks.com/docs/mcp",
-        resource_server_url=f"{MCP_BASE_URL}/mcp",
+        resource_server_url=MCP_BASE_URL,
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
             valid_scopes=["search", "review", "graph"],
@@ -411,12 +411,12 @@ CONSENT_HTML = """<!DOCTYPE html>
     .card {{ background: white; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
              max-width: 440px; width: 100%; padding: 40px; text-align: center; }}
     .connect-logos {{ display: flex; align-items: center; justify-content: center;
-                     gap: 12px; margin-bottom: 20px; }}
-    .connect-logos .logo-icon {{ width: 56px; height: 56px; border-radius: 12px;
+                     gap: 16px; margin-bottom: 20px; }}
+    .connect-logos .logo-icon {{ width: 68px; height: 68px; border-radius: 14px;
                                  display: flex; align-items: center; justify-content: center;
                                  overflow: hidden; }}
     .connect-logos .logo-icon img {{ width: 100%; height: 100%; object-fit: contain; }}
-    .connect-logos .logo-icon svg {{ width: 56px; height: 56px; display: block; }}
+    .connect-logos .logo-icon svg {{ width: 68px; height: 68px; display: block; }}
     .connect-logos .arrows {{ display: flex; align-items: center; gap: 2px; color: #94a3b8; }}
     .connect-logos .arrows svg {{ width: 20px; height: 20px; }}
     h1 {{ font-size: 22px; color: #1a1a2e; margin-bottom: 8px; }}

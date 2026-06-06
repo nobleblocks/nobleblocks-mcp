@@ -142,6 +142,55 @@ def static_checks() -> None:
         "Comment was removed",
     )
 
+    # ── 1j. OAUTH / AUTH page guard-rails ───────────────────────────────────
+    # These checks ensure the consent/auth page never silently breaks again.
+
+    # Claude logo must be an inline SVG (not an external img URL that can 404)
+    check(
+        "remote_server.py: Claude logo is inline SVG not external img",
+        "wikipedia.org" not in remote_text and
+        "<svg" in remote_text and
+        "D97757" in remote_text,  # gradient color unique to official Claude SVG
+        "BROKEN: Claude logo reverted to external Wikipedia PNG — will 404 in browsers",
+    )
+
+    # Logo sizes must be ≥ 60px (at least 20% larger than old 56px)
+    import re as _re
+    size_matches = _re.findall(r"logo-icon\s*\{\{[^}]*width:\s*(\d+)px", remote_text)
+    min_size = min(int(s) for s in size_matches) if size_matches else 0
+    check(
+        "remote_server.py: logo-icon width ≥ 60px (not too small)",
+        min_size >= 60,
+        f"logo-icon width={min_size}px — must be ≥ 60px" if min_size < 60 else "",
+    )
+
+    # resource_server_url must NOT include /mcp (breaks Claude auth flow)
+    check(
+        "remote_server.py: resource_server_url is base URL only (no /mcp suffix)",
+        "resource_server_url=f\"{MCP_BASE_URL}/mcp\"" not in remote_text and
+        'resource_server_url=f"{MCP_BASE_URL}/mcp"' not in remote_text,
+        "BROKEN: resource_server_url has /mcp suffix — breaks Claude OAuth resource validation",
+    )
+
+    # streamable_http_path must be /mcp
+    check(
+        "remote_server.py: streamable_http_path is /mcp",
+        'streamable_http_path="/mcp"' in remote_text,
+        'MISSING streamable_http_path="/mcp" — MCP endpoint unreachable',
+    )
+
+    # OAuth endpoints must be registered
+    check(
+        "remote_server.py: OAuth /authorize route registered",
+        "/authorize" in remote_text,
+        "MISSING /authorize route — OAuth cannot start",
+    )
+    check(
+        "remote_server.py: OAuth /token route registered",
+        "/token" in remote_text,
+        "MISSING /token route — token exchange will fail",
+    )
+
 
 # --------------------------------------------------------------------------- #
 # 2. LIVE API SMOKE TESTS
