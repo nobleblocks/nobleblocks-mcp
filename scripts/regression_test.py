@@ -188,6 +188,34 @@ def static_checks() -> None:
             "",
         )
 
+    # ── 1h2. search route: over-fetch must be ≥ 500 when filters active
+    # The Paper DB GIN scan grabs 500 candidates biased toward older papers.
+    # With low fetch limit (e.g. 120), year/citation filters leave almost nothing.
+    # REGRESSION: if fetchLimit is reduced below 500 for filtered queries, MCP returns empty/few results.
+    overfetch_ok = "500" in search_text and ("hasFilters" in search_text or "hasActiveFilters" in search_text)
+    check(
+        "search/route: fetchLimit ≥ 500 when filters active (over-fetch guardrail)",
+        overfetch_ok,
+        "REGRESSION: over-fetch limit was reduced below 500! "
+        "Year/citation filtering needs the full 500 candidates from Paper DB's GIN scan. "
+        "Without this, 'CRISPR min_year=2020' returns ~1 result instead of 50+."
+            if not overfetch_ok else "",
+    )
+
+    # ── 1h3. search route: year/sort filters must NOT be passed to Paper DB for phase=fast
+    # Paper DB's GIN scan doesn't support efficient year ordering — it's biased toward
+    # old papers in the heap. Filters must be applied CLIENT-SIDE after receiving candidates.
+    year_not_passed = "// PROTECTED FIX: Do NOT pass min_year" in search_text or \
+                      "year filter client-side" in search_text.lower() or \
+                      ("hasFilters" in search_text and "min_year" not in search_text.split("paperDBPromise")[0][-200:])
+    check(
+        "search/route: year/sort NOT passed to Paper DB for phase=fast",
+        year_not_passed,
+        "REGRESSION: year filter passed to Paper DB kills results! "
+        "Paper DB GIN LIMIT 500 + year filter = almost zero results for recent years."
+            if not year_not_passed else "",
+    )
+
     # ── 1i. Protected comments still present (they shouldn't be stripped)
     check(
         "search/route: PROTECTED FIX comment present",
