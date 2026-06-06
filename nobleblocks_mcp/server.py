@@ -55,7 +55,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-LOCAL_VERSION = "2.0.26"
+LOCAL_VERSION = "2.0.28"
 USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
@@ -649,10 +649,15 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         )
         papers = data.get("papers") or data.get("results") or []
 
+    # Filter out Figshare datasets from citation-sorted results (inflated citation counts)
+    sort = args.get("sort", "relevance")
+    if sort == "citations" and not args.get("doc_type"):
+        papers = [p for p in papers if not _is_figshare_dataset(p)]
+
     results = [_compact_paper(p) for p in papers[:limit]]
-    # Correct total: if results are empty, total must be 0 (avoid phantom totals)
+    # Correct total: must be consistent with results (fixes Arabic query mismatch)
     raw_total = data.get("total", len(papers))
-    total = raw_total if results else 0
+    total = max(raw_total, len(results)) if results else 0
 
     return {
         "query": query,
@@ -671,8 +676,34 @@ async def _tool_get_paper(args: dict[str, Any]) -> dict:
 
     data = await _get("/api/v1/papers/lookup", {"id": paper_id})
     paper = data.get("paper") or data
+    result = _compact_paper(paper, include_full=True)
+
+    # Enrich: if citations is 0 and we have a title, try search to get real count
+    if result.get("citations", 0) == 0 and result.get("title"):
+        try:
+            search_data = await _get(
+                "/api/v1/papers/search",
+                {"query": result["title"], "limit": 1, "phase": "fast"},
+            )
+            search_papers = search_data.get("papers") or search_data.get("results") or []
+            if search_papers:
+                sp = search_papers[0]
+                enriched_citations = _first_non_none(
+                    sp.get("citationCount"), sp.get("citation_count"),
+                    sp.get("cited_by_count"), sp.get("numCitations"),
+                )
+                if enriched_citations and enriched_citations > 0:
+                    result["citations"] = enriched_citations
+                # Also enrich venue and references if missing
+                if not result.get("venue"):
+                    result["venue"] = sp.get("venue") or sp.get("source") or (sp.get("journal") if isinstance(sp.get("journal"), str) else (sp.get("journal") or {}).get("name"))
+                if not result.get("references_count"):
+                    result["references_count"] = sp.get("referenceCount") or sp.get("reference_count") or 0
+        except Exception:
+            pass  # Enrichment is best-effort
+
     return {
-        **_compact_paper(paper, include_full=True),
+        **result,
         "attribution": "Powered by NobleBlocks (nobleblocks.com)",
     }
 
@@ -683,33 +714,41 @@ async def _tool_find_similar(args: dict[str, Any]) -> dict:
     if len(query) < 5:
         raise ValueError("Query must be at least 5 characters for similarity search")
 
+    limit = min(int(args.get("limit", 10)), 30)
+    vector_error = None
     try:
         data = await _get(
             "/api/v1/papers/similar",
             {
                 "query": query,
-                "limit": min(int(args.get("limit", 10)), 30),
+                "limit": limit,
             },
         )
         papers = data.get("papers") or data.get("results") or []
-        return {
-            "query": query,
-            "results": [_compact_paper(p) for p in papers],
-            "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
-        }
-    except Exception:
-        # Fallback: use text search sorted by relevance when vector search unavailable
-        data = await _get(
-            "/api/v1/papers/search",
-            {"query": query, "limit": min(int(args.get("limit", 10)), 30), "phase": "fast", "sort": "relevance"},
-        )
-        papers = data.get("papers") or data.get("results") or []
-        return {
-            "query": query,
-            "results": [_compact_paper(p) for p in papers],
-            "note": "Used relevance-ranked text search (vector search temporarily unavailable)",
-            "attribution": "Powered by NobleBlocks (nobleblocks.com)",
-        }
+        if papers:
+            return {
+                "query": query,
+                "results": [_compact_paper(p) for p in papers],
+                "search_method": "vector_embedding",
+                "attribution": "Powered by NobleBlocks semantic search (nobleblocks.com)",
+            }
+        vector_error = "Vector search returned empty results"
+    except Exception as e:
+        vector_error = str(e)[:200]
+
+    # Fallback: use text search sorted by relevance
+    data = await _get(
+        "/api/v1/papers/search",
+        {"query": query, "limit": limit, "phase": "fast", "sort": "relevance"},
+    )
+    papers = data.get("papers") or data.get("results") or []
+    return {
+        "query": query,
+        "results": [_compact_paper(p) for p in papers],
+        "search_method": "text_fallback",
+        "note": f"Used relevance-ranked text search (vector search issue: {vector_error})",
+        "attribution": "Powered by NobleBlocks (nobleblocks.com)",
+    }
 
 
 async def _tool_get_citation_graph(args: dict[str, Any]) -> dict:
@@ -826,13 +865,26 @@ async def _tool_search_by_entity(args: dict[str, Any]) -> dict:
         if not isinstance(node, dict):
             continue
         if node.get("type") == "entity":
+            # Filter out garbage entities: email footers, ZIP codes, partial addresses
+            name = node.get("name", "")
+            if _is_garbage_entity(name):
+                continue
             entities.append({
-                "name": node.get("name"),
+                "name": name,
                 "entity_type": node.get("entityType"),
                 "description": node.get("description"),
             })
         elif node.get("type") == "paper":
-            papers.append(_compact_paper(node))
+            paper = _compact_paper(node)
+            # Enrich paper with metadata from node if _compact_paper missed it
+            if not paper.get("year") and node.get("year"):
+                paper["year"] = node["year"]
+            if not paper.get("doi") and node.get("doi"):
+                paper["doi"] = node["doi"]
+            if not paper.get("authors") and node.get("authors"):
+                raw = node["authors"]
+                paper["authors"] = [a.get("name") if isinstance(a, dict) else str(a) for a in raw][:8] if isinstance(raw, list) else []
+            papers.append(paper)
 
     return {
         "query": query,
@@ -939,14 +991,16 @@ def _compact_paper(p: Any, include_full: bool = False) -> dict:
         abstract = abstract[:600] + "..."
 
     # Robust citation count extraction — check multiple field names
-    citations = (
-        p.get("citationCount")
-        or p.get("citation_count")
-        or p.get("cited_by_count")
-        or p.get("citations_count")
-        or p.get("numCitations")
-        or 0
+    # NOTE: Can't use `or` chaining because 0 is falsy in Python!
+    citations = _first_non_none(
+        p.get("citationCount"),
+        p.get("citation_count"),
+        p.get("cited_by_count"),
+        p.get("citations_count"),
+        p.get("numCitations"),
     )
+    if citations is None:
+        citations = 0
     # If citations is a list (citation objects), use length
     if isinstance(citations, list):
         citations = len(citations)
@@ -981,6 +1035,60 @@ def _compact_paper(p: Any, include_full: bool = False) -> dict:
         out["open_access"] = p.get("isOpenAccess", False)
         out["pdf_url"] = (p.get("openAccessPdf") or {}).get("url")
     return out
+
+
+def _first_non_none(*values):
+    """Return the first value that is not None (0 and '' are valid)."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+# Regex patterns for garbage entities extracted from PDF footers
+_GARBAGE_ENTITY_RE = re.compile(
+    r"(\d{5})|"                       # ZIP codes (5-digit)
+    r"(@[a-zA-Z0-9.-]+\.[a-z]{2,})|"  # Email addresses
+    r"(^\d+\s)|"                       # Leading numbers
+    r"(\.edu\b|\.org\b|\.com\b)|"     # Bare domain fragments
+    r"(\band\.$)"                      # Trailing "and."
+)
+
+
+def _is_garbage_entity(name: str) -> bool:
+    """Return True if the entity name looks like a PDF footer/address, not a real entity."""
+    if not name or len(name) < 3:
+        return True
+    if len(name) > 200:
+        return True
+    # Contains email
+    if "@" in name:
+        return True
+    # Mostly digits (ZIP/postal code)
+    digits = sum(c.isdigit() for c in name)
+    if digits > len(name) * 0.5:
+        return True
+    # Ends with period + country or state
+    if _GARBAGE_ENTITY_RE.search(name):
+        return True
+    return False
+
+
+def _is_figshare_dataset(p: dict) -> bool:
+    """Detect Figshare datasets which often have inflated citation counts."""
+    if not isinstance(p, dict):
+        return False
+    doi = (p.get("doi") or p.get("DOI") or "").lower()
+    if "figshare" in doi:
+        return True
+    venue = (p.get("venue") or p.get("source") or "").lower()
+    if "figshare" in venue:
+        return True
+    # Also filter generic "dataset" typed records when they dominate citation sorts
+    doc_type = (p.get("type") or p.get("doc_type") or p.get("documentType") or "").lower()
+    if doc_type == "dataset":
+        return True
+    return False
 
 
 def _build_url(p: dict) -> str | None:
