@@ -791,6 +791,10 @@ async def register_shim(request: Request):
     except Exception:
         body = {}
 
+    logger.info("register_shim: body keys=%s grant_types=%s scope=%s redirect_uris=%s",
+                list(body.keys()), body.get("grant_types"), body.get("scope"),
+                body.get("redirect_uris"))
+
     # Inject refresh_token so the SDK validation passes
     gt = set(body.get("grant_types") or ["authorization_code"])
     gt.add("authorization_code")

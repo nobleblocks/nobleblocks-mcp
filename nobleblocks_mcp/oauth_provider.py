@@ -155,6 +155,8 @@ class NobleBlocksOAuthProvider(
             return self._access_tokens[token_str]
         if self._use_dynamo:
             data = self._store.get("access_token", token_str)
+            if not data:
+                logger.warning("_load_access_token: DynamoDB returned None for token=%.12s...", token_str)
             if data:
                 from datetime import datetime
                 expires_raw = data["expires_at"]
@@ -528,12 +530,20 @@ class NobleBlocksOAuthProvider(
     # ── Token Validation ─────────────────────────────────────────────────────
 
     async def load_access_token(self, token: str) -> AccessToken | None:
+        in_memory = token in self._access_tokens
         at = self._load_access_token(token)
         if at and at.expires_at > time.time():
+            logger.info("load_access_token: FOUND token=%.12s... memory=%s expires_in=%.0fs",
+                        token, in_memory, at.expires_at - time.time())
             return at
         if at:
+            logger.warning("load_access_token: EXPIRED token=%.12s... expires_at=%s now=%s",
+                           token, at.expires_at, time.time())
             self._delete_access_token(token)
             self._delete_nb_token_mapping("token", token)
+        else:
+            logger.warning("load_access_token: NOT FOUND token=%.12s... memory=%s dynamo=%s",
+                           token, in_memory, self._use_dynamo)
         return None
 
     # ── Revocation ───────────────────────────────────────────────────────────
