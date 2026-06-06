@@ -415,7 +415,7 @@ CONSENT_HTML = """<!DOCTYPE html>
     .connect-logos .logo-icon {{ width: 68px; height: 68px; border-radius: 14px;
                                  display: flex; align-items: center; justify-content: center;
                                  overflow: hidden; }}
-    .connect-logos .logo-icon img {{ width: 100%; height: 100%; object-fit: contain; }}
+    .connect-logos .logo-icon img {{ width: 100%; height: 100%; object-fit: contain; transform: scale(1.7); transform-origin: center center; }}
     .connect-logos .logo-icon svg {{ width: 68px; height: 68px; display: block; }}
     .connect-logos .arrows {{ display: flex; align-items: center; gap: 2px; color: #94a3b8; }}
     .connect-logos .arrows svg {{ width: 20px; height: 20px; }}
