@@ -255,10 +255,11 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_papers",
             description=(
-                "Search 340M+ academic papers and clinical trials from PubMed, arXiv, Crossref, "
-                "ClinicalTrials.gov, and dozens of other sources. Returns ranked results with title, "
+                "Search 340M+ academic papers, patents, clinical trials, and grants from PubMed, arXiv, Crossref, "
+                "ClinicalTrials.gov, OpenAlex, and dozens of other sources. Returns ranked results with title, "
                 "authors, year, abstract, citations, and DOI. Use this when the user asks about "
-                "research, studies, clinical trials, evidence, or wants to find scientific papers on any topic."
+                "research, studies, clinical trials, evidence, or wants to find scientific papers on any topic. "
+                "Supports filtering by open access, document type, author name, language, citation count, and year range."
             ),
             annotations=TOOL_ANNOTATIONS,
             inputSchema={
@@ -292,14 +293,32 @@ async def list_tools() -> list[Tool]:
                     },
                     "source": {
                         "type": "string",
-                        "description": "Restrict to a source: pubmed, openalex, semanticscholar, arxiv, europepmc, scopus.",
-                        "enum": ["pubmed", "openalex", "semanticscholar", "arxiv", "europepmc", "scopus"],
+                        "description": "Restrict to a source: pubmed, openalex, semanticscholar, arxiv, europepmc, clinicaltrials, crossref, doaj.",
+                        "enum": ["pubmed", "openalex", "semanticscholar", "arxiv", "europepmc", "clinicaltrials", "crossref", "doaj"],
                     },
                     "sort": {
                         "type": "string",
                         "enum": ["relevance", "date", "citations"],
                         "description": "Result ordering. Default: relevance.",
                         "default": "relevance",
+                    },
+                    "open_access": {
+                        "type": "boolean",
+                        "description": "Filter to only open access papers with free full-text available.",
+                    },
+                    "doc_type": {
+                        "type": "string",
+                        "description": "Filter by document type.",
+                        "enum": ["journal-article", "review", "preprint", "conference", "book-chapter", "dataset", "patent", "clinical-trial"],
+                    },
+                    "author_name": {
+                        "type": "string",
+                        "description": "Filter results by author name (partial match supported).",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Filter by paper language (ISO 639-1 code).",
+                        "enum": ["en", "zh", "es", "fr", "de", "ja", "ko", "pt", "ru", "ar"],
                     },
                 },
                 "required": ["query"],
@@ -580,12 +599,13 @@ def _sanitize_args(args: dict[str, Any]) -> dict[str, Any]:
 # ─── Tool implementations ──────────────────────────────────────────────────────
 
 async def _tool_search_papers(args: dict[str, Any]) -> dict:
-    """Search 340M+ papers."""
+    """Search 340M+ papers, patents, clinical trials, and grants."""
     query = args.get("query", "")
     if len(query) < 2:
         raise ValueError("Query must be at least 2 characters")
 
     limit = min(int(args.get("limit", 20)), 50)
+    open_access = args.get("open_access")
     data = await _get(
         "/api/v1/papers/search",
         {
@@ -601,6 +621,10 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
             "min_citations": args.get("min_citations"),
             "source": args.get("source"),
             "sort": args.get("sort", "relevance"),
+            "open_access": "true" if open_access else None,
+            "doc_type": args.get("doc_type"),
+            "author_name": args.get("author_name"),
+            "language": args.get("language"),
         },
     )
     papers = data.get("papers") or data.get("results") or []
@@ -617,6 +641,10 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
                 "min_citations": args.get("min_citations"),
                 "source": args.get("source"),
                 "sort": args.get("sort", "relevance"),
+                "open_access": "true" if open_access else None,
+                "doc_type": args.get("doc_type"),
+                "author_name": args.get("author_name"),
+                "language": args.get("language"),
             },
         )
         papers = data.get("papers") or data.get("results") or []

@@ -211,8 +211,12 @@ async def search_papers(
     min_citations: int | None = None,
     source: str | None = None,
     sort: str = "relevance",
+    open_access: bool | None = None,
+    doc_type: str | None = None,
+    author_name: str | None = None,
+    language: str | None = None,
 ) -> str:
-    """Search 340M+ academic papers and clinical trials from PubMed, arXiv, Crossref, ClinicalTrials.gov, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
+    """Search 340M+ academic papers, patents, clinical trials, and grants from PubMed, arXiv, Crossref, ClinicalTrials.gov, OpenAlex, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI. Supports filtering by open access status, document type (journal-article, review, preprint, conference, book-chapter, dataset, patent, clinical-trial), author name, language, source database, citation count, and year range."""
     query = sanitize_input(query)
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
@@ -233,6 +237,10 @@ async def search_papers(
             "min_citations": min_citations,
             "source": source,
             "sort": sort,
+            "open_access": "true" if open_access else None,
+            "doc_type": doc_type,
+            "author_name": author_name,
+            "language": language,
         },
     )
     papers = data.get("papers") or data.get("results") or []
@@ -250,6 +258,10 @@ async def search_papers(
                 "min_citations": min_citations,
                 "source": source,
                 "sort": sort,
+                "open_access": "true" if open_access else None,
+                "doc_type": doc_type,
+                "author_name": author_name,
+                "language": language,
             },
         )
         papers = data.get("papers") or data.get("results") or []
