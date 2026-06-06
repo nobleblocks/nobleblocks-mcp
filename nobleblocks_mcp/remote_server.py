@@ -212,7 +212,7 @@ async def search_papers(
     source: str | None = None,
     sort: str = "relevance",
 ) -> str:
-    """Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
+    """Search 340M+ academic papers and clinical trials from PubMed, arXiv, Crossref, ClinicalTrials.gov, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI."""
     query = sanitize_input(query)
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
@@ -259,7 +259,7 @@ async def search_papers(
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:effective_limit]],
         "source": "NobleBlocks Academic Database",
-        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ",
+        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ, ClinicalTrials.gov",
     }
     # Surface spelling correction so AI clients can suggest "Did you mean X?"
     corrected = data.get("correctedQuery")

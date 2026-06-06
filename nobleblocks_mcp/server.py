@@ -255,10 +255,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_papers",
             description=(
-                "Search 340M+ academic papers from PubMed, arXiv, Crossref, and dozens of "
-                "other sources. Returns ranked results with title, authors, year, abstract, "
-                "citations, and DOI. Use this when the user asks about research, studies, "
-                "evidence, or wants to find scientific papers on any topic."
+                "Search 340M+ academic papers and clinical trials from PubMed, arXiv, Crossref, "
+                "ClinicalTrials.gov, and dozens of other sources. Returns ranked results with title, "
+                "authors, year, abstract, citations, and DOI. Use this when the user asks about "
+                "research, studies, clinical trials, evidence, or wants to find scientific papers on any topic."
             ),
             annotations=TOOL_ANNOTATIONS,
             inputSchema={
@@ -626,7 +626,7 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:limit]],
         "source": "NobleBlocks Academic Database",
-        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ",
+        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ, ClinicalTrials.gov",
     }
 
 
