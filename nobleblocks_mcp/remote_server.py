@@ -432,11 +432,13 @@ CONSENT_HTML = """<!DOCTYPE html>
     .divider::before {{ margin-right: 12px; }}
     .divider::after {{ margin-left: 12px; }}
     .btn-google {{ display: flex; align-items: center; justify-content: center; width: 100%;
-                   padding: 12px; background: white; color: #1f2937; border: 1px solid #e2e8f0;
+                   padding: 12px; background: #e8eaed; color: #1f2937; border: 1px solid #c8cacf;
                    border-radius: 8px; font-size: 15px; font-weight: 500; cursor: pointer;
                    transition: background 0.2s, box-shadow 0.2s; gap: 10px; }}
-    .btn-google:hover {{ background: #f9fafb; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
-    .btn-google:disabled {{ opacity: 0.6; cursor: not-allowed; }}
+    .btn-google:hover {{ background: #dadce0; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }}
+    .btn-google:disabled {{ cursor: not-allowed; }}
+    .btn-google.connecting {{ background: #4f46e5; color: white; border-color: #4338ca;
+                              animation: pulse-btn 1.4s ease-in-out infinite; }}
     .btn-google svg {{ width: 20px; height: 20px; flex-shrink: 0; }}
     .login-section {{ margin-bottom: 16px; }}
     .login-section label {{ display: block; text-align: left; font-size: 13px; color: #475569;
@@ -453,6 +455,8 @@ CONSENT_HTML = """<!DOCTYPE html>
     .btn-cancel {{ background: transparent; color: #64748b; border: 1px solid #e2e8f0;
                    margin-top: 8px; }}
     .btn-cancel:hover {{ background: #f8fafc; }}
+    @keyframes pulse-btn {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.75; }} }}
+    .btn.connecting {{ background: #4338ca; animation: pulse-btn 1.4s ease-in-out infinite; }}
     .footer {{ font-size: 12px; color: #94a3b8; margin-top: 16px; }}
     .footer a {{ color: #6366f1; text-decoration: none; }}
   </style>
@@ -550,6 +554,7 @@ CONSENT_HTML = """<!DOCTYPE html>
       }}
       const btn = document.getElementById('googleBtn');
       btn.disabled = true;
+      btn.classList.add('connecting');
       btn.innerHTML = '<span>Connecting...</span>';
       try {{
         const resp = await fetch('/oauth/login/google', {{
@@ -568,6 +573,7 @@ CONSENT_HTML = """<!DOCTYPE html>
           errEl.textContent = data.error || 'Login failed.';
           errEl.style.display = 'block';
           btn.disabled = false;
+          btn.classList.remove('connecting');
           btn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Continue with Google';
         }}
       }} catch (err) {{
@@ -575,6 +581,7 @@ CONSENT_HTML = """<!DOCTYPE html>
         errEl.textContent = 'Connection error. Please try again.';
         errEl.style.display = 'block';
         btn.disabled = false;
+        btn.classList.remove('connecting');
         btn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg> Continue with Google';
       }}
     }}
@@ -584,6 +591,7 @@ CONSENT_HTML = """<!DOCTYPE html>
       const btn = document.getElementById('connectBtn');
       const errEl = document.getElementById('errorMsg');
       btn.disabled = true;
+      btn.classList.add('connecting');
       btn.textContent = 'Connecting...';
       errEl.style.display = 'none';
 
@@ -604,12 +612,14 @@ CONSENT_HTML = """<!DOCTYPE html>
           errEl.textContent = data.error || 'Login failed. Check your credentials.';
           errEl.style.display = 'block';
           btn.disabled = false;
+          btn.classList.remove('connecting');
           btn.textContent = 'Connect';
         }}
       }} catch (err) {{
         errEl.textContent = 'Connection error. Please try again.';
         errEl.style.display = 'block';
         btn.disabled = false;
+        btn.classList.remove('connecting');
         btn.textContent = 'Connect';
       }}
     }}
