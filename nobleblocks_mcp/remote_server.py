@@ -82,7 +82,7 @@ mcp = FastMCP(
     auth=AuthSettings(
         issuer_url=MCP_BASE_URL,
         service_documentation_url="https://www.nobleblocks.com/docs/mcp",
-        resource_server_url=MCP_BASE_URL,
+        resource_server_url=f"{MCP_BASE_URL}/mcp",
         client_registration_options=ClientRegistrationOptions(
             enabled=True,
             valid_scopes=["search", "review", "graph"],
@@ -91,7 +91,7 @@ mcp = FastMCP(
     ),
     host=HOST,
     port=PORT,
-    streamable_http_path="/mcp",
+    streamable_http_path="/",  # PROTECTED: handles POST at sub-app root; mounted at both / and /mcp
 )
 
 
@@ -866,9 +866,15 @@ def create_app() -> Starlette:
         Route("/register", register_shim, methods=["POST"]),  # shim: injects refresh_token for Claude
     ]
 
-    # Mount MCP app and add custom routes
+    # Mount MCP app at both /mcp (connector URL) and / (fallback for clients
+    # that POST to root based on OAuth resource discovery). The custom GET route
+    # for / takes priority since Starlette matches method-specific routes first.
+    # PROTECTED: dual mount ensures both /mcp and / POST paths work.
     from starlette.routing import Mount
-    routes = custom_routes + [Mount("/", app=mcp_app)]
+    routes = custom_routes + [
+        Mount("/mcp", app=mcp_app),   # connector URL — strips /mcp prefix
+        Mount("/", app=mcp_app),      # OAuth/well-known + fallback POST
+    ]
 
     # Forward the MCP session manager's lifespan so its task group initializes
     @asynccontextmanager

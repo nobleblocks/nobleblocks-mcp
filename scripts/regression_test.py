@@ -164,19 +164,28 @@ def static_checks() -> None:
         f"logo-icon width={min_size}px — must be ≥ 60px" if min_size < 60 else "",
     )
 
-    # resource_server_url must NOT include /mcp (breaks Claude auth flow)
+    # resource_server_url MUST include /mcp — tells OAuth discovery the correct
+    # resource endpoint. Without it, clients POST to / and get 404.
+    # (Bug fixed 2026-06-06: was base URL only, caused "auth failed" in Claude)
     check(
-        "remote_server.py: resource_server_url is base URL only (no /mcp suffix)",
-        "resource_server_url=f\"{MCP_BASE_URL}/mcp\"" not in remote_text and
-        'resource_server_url=f"{MCP_BASE_URL}/mcp"' not in remote_text,
-        "BROKEN: resource_server_url has /mcp suffix — breaks Claude OAuth resource validation",
+        "remote_server.py: resource_server_url includes /mcp path",
+        'resource_server_url=f"{MCP_BASE_URL}/mcp"' in remote_text,
+        "BROKEN: resource_server_url missing /mcp — clients will POST to / (404)",
     )
 
-    # streamable_http_path must be /mcp
+    # streamable_http_path must be "/" with dual-mount at /mcp and / in create_app()
+    # This ensures both connector URL (/mcp) and OAuth resource URL (/) work.
     check(
-        "remote_server.py: streamable_http_path is /mcp",
-        'streamable_http_path="/mcp"' in remote_text,
-        'MISSING streamable_http_path="/mcp" — MCP endpoint unreachable',
+        "remote_server.py: streamable_http_path is / (dual-mount handles /mcp)",
+        'streamable_http_path="/"' in remote_text,
+        'MISSING streamable_http_path="/" — dual mount routing broken',
+    )
+
+    # Dual mount: both Mount("/mcp", ...) and Mount("/", ...) must exist
+    check(
+        "remote_server.py: dual mount /mcp and / present",
+        'Mount("/mcp"' in remote_text and 'Mount("/"' in remote_text,
+        "MISSING dual mount — /mcp or / POST path will 404",
     )
 
     # OAuth endpoints must be registered
