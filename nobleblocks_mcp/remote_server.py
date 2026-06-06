@@ -47,7 +47,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.0")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.26")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -145,6 +145,8 @@ async def _api_post(path: str, body: dict[str, Any], api_key: str = "") -> dict:
     url = f"{NB_API_BASE}{path}"
     async with httpx.AsyncClient(timeout=60.0, headers=_headers(api_key)) as client:
         resp = await client.post(url, json=body)
+        if resp.status_code in (401, 403):
+            raise RuntimeError(f"Authentication required (HTTP {resp.status_code})")
         resp.raise_for_status()
         return resp.json()
 
@@ -156,22 +158,46 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
     abstract = p.get("abstract") or ""
     if len(abstract) > 600:
         abstract = abstract[:600] + "..."
-    out: dict[str, Any] = {
-        "id": p.get("paperId") or p.get("id") or p.get("paper_id"),
-        "title": p.get("title"),
-        "authors": [
+
+    # Robust citation count extraction — check multiple field names
+    citations = (
+        p.get("citationCount")
+        or p.get("citation_count")
+        or p.get("cited_by_count")
+        or p.get("citations_count")
+        or p.get("numCitations")
+        or 0
+    )
+    # If citations is a list (citation objects), use length
+    if isinstance(citations, list):
+        citations = len(citations)
+
+    # Robust author extraction
+    raw_authors = p.get("authors") or []
+    if isinstance(raw_authors, str):
+        authors = [a.strip() for a in raw_authors.split(",") if a.strip()][:8]
+    else:
+        authors = [
             a.get("name") if isinstance(a, dict) else str(a)
-            for a in (p.get("authors") or [])[:8]
-        ],
+            for a in (raw_authors or [])[:8]
+        ]
+
+    # KG nodes use "name" instead of "title"
+    title = p.get("title") or p.get("name")
+
+    out: dict[str, Any] = {
+        "id": p.get("paperId") or p.get("id") or p.get("paper_id") or p.get("uid"),
+        "title": title,
+        "authors": authors,
         "year": p.get("year") or _extract_year(p.get("publicationDate") or p.get("publication_date")),
         "doi": p.get("doi") or p.get("DOI") or (p.get("externalIds") or {}).get("DOI"),
-        "citations": p.get("citationCount") or p.get("citation_count") or 0,
+        "citations": citations,
         "venue": p.get("venue") or p.get("source") or (p.get("journal") or {}).get("name"),
         "abstract": abstract,
         "url": _build_url(p),
     }
     if include_full:
-        out["references_count"] = p.get("referenceCount") or 0
+        out["references_count"] = p.get("referenceCount") or p.get("reference_count") or 0
         out["open_access"] = p.get("isOpenAccess", False)
         out["pdf_url"] = (p.get("openAccessPdf") or {}).get("url")
     return out
@@ -289,10 +315,15 @@ async def search_papers(
         )
         papers = data.get("papers") or data.get("results") or []
 
+    compact_results = [_compact_paper(p) for p in papers[:effective_limit]]
+    # Correct total: if results are empty, total must be 0 (avoid phantom totals from backend)
+    raw_total = data.get("total", len(papers))
+    total = raw_total if compact_results else 0
+
     result: dict[str, Any] = {
         "query": query,
-        "total": data.get("total", len(papers)),
-        "results": [_compact_paper(p) for p in papers[:effective_limit]],
+        "total": total,
+        "results": compact_results,
         "source": "NobleBlocks Academic Database",
         "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ, ClinicalTrials.gov",
     }
@@ -351,10 +382,11 @@ async def find_similar(query: str, limit: int = 10) -> str:
     if len(query) < 5:
         return json.dumps({"error": "Query must be at least 5 characters"})
 
+    effective_limit = min(limit, 30)
     try:
         data = await _api_get(
             "/api/v1/papers/similar",
-            {"query": query, "limit": min(limit, 30)},
+            {"query": query, "limit": effective_limit},
         )
         papers = data.get("papers") or data.get("results") or []
         result = {
@@ -364,10 +396,10 @@ async def find_similar(query: str, limit: int = 10) -> str:
         }
         return json.dumps(result, indent=2, default=str)
     except Exception:
-        # Fallback: use text search sorted by relevance when vector search unavailable
+        # Fallback: use full search (not phase=fast) sorted by relevance for better quality
         data = await _api_get(
             "/api/v1/papers/search",
-            {"query": query, "limit": min(limit, 30), "sort": "relevance"},
+            {"query": query, "limit": effective_limit, "sort": "relevance"},
         )
         papers = data.get("papers") or data.get("results") or []
         result = {
@@ -454,20 +486,59 @@ async def search_by_entity(
                 "query": query,
             })
         if e.response.status_code in (502, 503, 504):
+            # Fallback to paper search
+            try:
+                fallback = await _api_get("/api/v1/papers/search", {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"})
+                fallback_papers = fallback.get("papers") or fallback.get("results") or []
+                return json.dumps({
+                    "query": query,
+                    "entities_found": 0,
+                    "papers_found": len(fallback_papers),
+                    "entities": [],
+                    "papers": [_compact_paper(p) for p in fallback_papers[:max_nodes]],
+                    "relationships": 0,
+                    "note": "Knowledge graph temporarily overloaded. Showing relevant papers instead.",
+                    "attribution": "NobleBlocks (nobleblocks.com)",
+                }, indent=2, default=str)
+            except Exception:
+                pass
             return json.dumps({
                 "error": "Knowledge graph is temporarily overloaded. Try search_papers instead, or retry in a moment.",
                 "query": query,
             })
         return json.dumps({"error": f"Knowledge graph request failed (HTTP {e.response.status_code})"})
     except Exception as e:
-        logger.warning("search_by_entity error: %s", e)
-        return json.dumps({"error": "Knowledge graph temporarily unavailable. Try search_papers instead."})
+        logger.warning("search_by_entity error for '%s': %s", query, e)
+        # Fallback to paper search
+        try:
+            fallback = await _api_get("/api/v1/papers/search", {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"})
+            fallback_papers = fallback.get("papers") or fallback.get("results") or []
+            return json.dumps({
+                "query": query,
+                "entities_found": 0,
+                "papers_found": len(fallback_papers),
+                "entities": [],
+                "papers": [_compact_paper(p) for p in fallback_papers[:max_nodes]],
+                "relationships": 0,
+                "note": "Knowledge graph unavailable for this query. Showing relevant papers instead.",
+                "attribution": "NobleBlocks (nobleblocks.com)",
+            }, indent=2, default=str)
+        except Exception:
+            return json.dumps({"error": "Knowledge graph temporarily unavailable. Try search_papers instead."})
 
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
+
+    # Robustly handle non-list responses
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
+
     entities = []
     papers = []
     for node in nodes:
+        # Skip non-dict nodes (API sometimes returns string values)
         if not isinstance(node, dict):
             continue
         if node.get("type") == "entity":
@@ -661,7 +732,11 @@ async def create_literature_review(
         )
         papers = search_data.get("papers") or search_data.get("results") or []
         return json.dumps({
-            "note": "Literature review generation unavailable. Here are the top papers for manual synthesis.",
+            "note": (
+                "AI-generated literature review requires a NobleBlocks Pro account. "
+                "Here are the top-cited papers on this topic for manual synthesis. "
+                "Create a full AI review at: https://www.nobleblocks.com/deep-review"
+            ),
             "topic": topic,
             "papers": [_compact_paper(p) for p in papers[:num_papers]],
             "total_found": search_data.get("total", len(papers)),

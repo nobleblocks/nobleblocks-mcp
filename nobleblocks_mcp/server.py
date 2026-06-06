@@ -55,7 +55,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-LOCAL_VERSION = "2.0.1"
+LOCAL_VERSION = "2.0.26"
 USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
@@ -649,10 +649,15 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         )
         papers = data.get("papers") or data.get("results") or []
 
+    results = [_compact_paper(p) for p in papers[:limit]]
+    # Correct total: if results are empty, total must be 0 (avoid phantom totals)
+    raw_total = data.get("total", len(papers))
+    total = raw_total if results else 0
+
     return {
         "query": query,
-        "total": data.get("total", len(papers)),
-        "results": [_compact_paper(p) for p in papers[:limit]],
+        "total": total,
+        "results": results,
         "source": "NobleBlocks Academic Database",
         "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ, ClinicalTrials.gov",
     }
@@ -783,15 +788,43 @@ async def _tool_search_by_entity(args: dict[str, Any]) -> dict:
 
     max_nodes = min(int(args.get("max_nodes", 20)), 50)
 
-    data = await _get("/api/v1/kg/explore", {"query": query, "max_nodes": max_nodes})
+    try:
+        data = await _get("/api/v1/kg/explore", {"query": query, "max_nodes": max_nodes})
+    except Exception as e:
+        logger.warning("search_by_entity KG error for '%s': %s", query, e)
+        # Fallback: use paper search with relevance sorting
+        fallback_data = await _get(
+            "/api/v1/papers/search",
+            {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"},
+        )
+        fallback_papers = fallback_data.get("papers") or fallback_data.get("results") or []
+        return {
+            "query": query,
+            "entities_found": 0,
+            "papers_found": len(fallback_papers),
+            "entities": [],
+            "papers": [_compact_paper(p) for p in fallback_papers[:max_nodes]],
+            "relationships": 0,
+            "note": "Knowledge graph unavailable for this query. Showing relevant papers instead.",
+            "attribution": "NobleBlocks (nobleblocks.com)",
+        }
 
     # Format nodes into a compact response
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
 
+    # Handle case where API returns a string/non-list for nodes
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
+
     entities = []
     papers = []
     for node in nodes:
+        # Skip non-dict nodes (API sometimes returns string values)
+        if not isinstance(node, dict):
+            continue
         if node.get("type") == "entity":
             entities.append({
                 "name": node.get("name"),
@@ -826,12 +859,20 @@ async def _tool_search_grants(args: dict[str, Any]) -> dict:
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
 
+    # Ensure we have lists
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
+
     # Extract funders and their funded papers
     funders = []
     funded_papers = []
     funder_paper_links: dict[str, list[str]] = {}  # funder_uid -> [paper_titles]
 
     for node in nodes:
+        if not isinstance(node, dict):
+            continue
         if node.get("type") == "entity" and node.get("entityType") == "funder":
             funder_info = {
                 "name": node.get("name"),
@@ -844,8 +885,10 @@ async def _tool_search_grants(args: dict[str, Any]) -> dict:
             funded_papers.append(_compact_paper(node))
 
     # Map FUNDED edges to link funders to papers
-    node_map = {n.get("uid"): n for n in nodes}
+    node_map = {n.get("uid"): n for n in nodes if isinstance(n, dict)}
     for edge in edges:
+        if not isinstance(edge, dict):
+            continue
         if edge.get("label") == "FUNDED":
             src = edge.get("source", "")
             tgt = edge.get("target", "")
@@ -859,7 +902,7 @@ async def _tool_search_grants(args: dict[str, Any]) -> dict:
     # Enrich funders with their paper list
     for i, funder in enumerate(funders):
         uid_candidates = [n.get("uid") for n in nodes
-                          if n.get("name") == funder["name"] and n.get("entityType") == "funder"]
+                          if isinstance(n, dict) and n.get("name") == funder["name"] and n.get("entityType") == "funder"]
         if uid_candidates:
             funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
 
@@ -886,7 +929,7 @@ async def _tool_search_grants(args: dict[str, Any]) -> dict:
 
 # ─── Paper formatting ──────────────────────────────────────────────────────────
 
-def _compact_paper(p: dict, include_full: bool = False) -> dict:
+def _compact_paper(p: Any, include_full: bool = False) -> dict:
     """Strip a paper record to AI-friendly fields. Never expose full text."""
     if not isinstance(p, dict):
         return {}
@@ -895,22 +938,46 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
     if len(abstract) > 600:
         abstract = abstract[:600] + "..."
 
-    out: dict[str, Any] = {
-        "id": p.get("paperId") or p.get("id") or p.get("paper_id"),
-        "title": p.get("title"),
-        "authors": [
+    # Robust citation count extraction — check multiple field names
+    citations = (
+        p.get("citationCount")
+        or p.get("citation_count")
+        or p.get("cited_by_count")
+        or p.get("citations_count")
+        or p.get("numCitations")
+        or 0
+    )
+    # If citations is a list (citation objects), use length
+    if isinstance(citations, list):
+        citations = len(citations)
+
+    # Robust author extraction
+    raw_authors = p.get("authors") or []
+    if isinstance(raw_authors, str):
+        # Sometimes authors come as a comma-separated string
+        authors = [a.strip() for a in raw_authors.split(",") if a.strip()][:8]
+    else:
+        authors = [
             a.get("name") if isinstance(a, dict) else str(a)
-            for a in (p.get("authors") or [])[:8]
-        ],
+            for a in (raw_authors or [])[:8]
+        ]
+
+    # KG nodes use "name" instead of "title"
+    title = p.get("title") or p.get("name")
+
+    out: dict[str, Any] = {
+        "id": p.get("paperId") or p.get("id") or p.get("paper_id") or p.get("uid"),
+        "title": title,
+        "authors": authors,
         "year": p.get("year") or _extract_year(p.get("publicationDate") or p.get("publication_date")),
         "doi": p.get("doi") or p.get("DOI") or (p.get("externalIds") or {}).get("DOI"),
-        "citations": p.get("citationCount") or p.get("citation_count") or 0,
+        "citations": citations,
         "venue": p.get("venue") or p.get("source") or (p.get("journal") or {}).get("name"),
         "abstract": abstract,
         "url": _build_url(p),
     }
     if include_full:
-        out["references_count"] = p.get("referenceCount") or 0
+        out["references_count"] = p.get("referenceCount") or p.get("reference_count") or 0
         out["open_access"] = p.get("isOpenAccess", False)
         out["pdf_url"] = (p.get("openAccessPdf") or {}).get("url")
     return out
