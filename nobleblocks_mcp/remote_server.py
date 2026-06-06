@@ -74,7 +74,8 @@ mcp = FastMCP(
         "Use get_paper to fetch full metadata for a specific paper by DOI, PMID, or arXiv ID. "
         "Use get_citation_graph to explore the citation network of a paper. "
         "Use search_by_entity to explore connections between genes, drugs, diseases, "
-        "and institutions in the knowledge graph."
+        "and institutions in the knowledge graph. "
+        "Use search_grants to find funding sources and grant-funded research."
     ),
     icons=[Icon(src=f"{MCP_BASE_URL}/icon.png")],
     website_url="https://www.nobleblocks.com",
@@ -391,6 +392,90 @@ async def search_by_entity(
         "papers": papers[:20],
         "relationships": len(edges),
         "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — 1.3M+ entities, 109M+ links",
+    }
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Search Grants & Funding",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def search_grants(
+    query: str,
+    limit: int = 20,
+) -> str:
+    """Search for research grants and funding sources. Find which organizations
+    fund research on a given topic, or discover what research a specific funder
+    (e.g. NIH, Gates Foundation, ERC, Wellcome Trust) has supported.
+    Returns funders, their funded papers, and award IDs."""
+    query = sanitize_input(query, MAX_QUERY_LENGTH)
+    if len(query) < 2:
+        return json.dumps({"error": "Query must be at least 2 characters"})
+
+    limit = max(1, min(limit, 50))
+    data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit})
+
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+
+    funders = []
+    funded_papers = []
+    funder_paper_links: dict[str, list[str]] = {}
+
+    for node in nodes:
+        if node.get("type") == "entity" and node.get("entityType") == "funder":
+            funder_info = {
+                "name": node.get("name"),
+                "country": (node.get("metadata") or {}).get("country", ""),
+                "description": node.get("description"),
+            }
+            funders.append(funder_info)
+            funder_paper_links[node.get("uid", "")] = []
+        elif node.get("type") == "paper":
+            funded_papers.append(_compact_paper(node))
+
+    # Map FUNDED edges
+    node_map = {n.get("uid"): n for n in nodes}
+    for edge in edges:
+        if edge.get("label") == "FUNDED":
+            src = edge.get("source", "")
+            tgt = edge.get("target", "")
+            paper_node = node_map.get(tgt) or node_map.get(src)
+            funder_uid = src if src in funder_paper_links else tgt
+            if funder_uid in funder_paper_links and paper_node:
+                title = paper_node.get("title") or paper_node.get("name", "")
+                if title:
+                    funder_paper_links[funder_uid].append(title)
+
+    for funder in funders:
+        uid_candidates = [n.get("uid") for n in nodes
+                          if n.get("name") == funder["name"] and n.get("entityType") == "funder"]
+        if uid_candidates:
+            funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
+
+    if not funders and funded_papers:
+        result = {
+            "query": query,
+            "funders_found": 0,
+            "papers_with_funding": len(funded_papers),
+            "papers": funded_papers[:limit],
+            "note": "No specific funders found. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
+            "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com)",
+        }
+        return json.dumps(result, indent=2, default=str)
+
+    result = {
+        "query": query,
+        "funders_found": len(funders),
+        "funded_papers_found": len(funded_papers),
+        "funders": funders[:limit],
+        "funded_papers": funded_papers[:limit],
+        "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — Grants & Funding data",
     }
     return json.dumps(result, indent=2, default=str)
 

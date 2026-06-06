@@ -457,6 +457,38 @@ async def list_tools() -> list[Tool]:
                 "required": ["query"],
             },
         ),
+        Tool(
+            name="search_grants",
+            description=(
+                "Search for research grants and funding sources. Find which organizations "
+                "fund research on a given topic, or discover what research a specific funder "
+                "(e.g. NIH, Gates Foundation, ERC) has supported. Returns funders, their "
+                "funded papers, and award IDs."
+            ),
+            annotations=TOOL_ANNOTATIONS,
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Funder name OR research topic. Examples: 'NIH', "
+                            "'Gates Foundation', 'ERC', 'CRISPR funding', "
+                            "'cancer immunotherapy grants'."
+                        ),
+                        "maxLength": MAX_QUERY_LENGTH,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return (1-50). Default 20.",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 50,
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
@@ -475,10 +507,12 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     # Trial notice (prepended to response when no key)
     trial_notice = ""
     if not API_KEY:
-        remaining = RATE_LIMIT_TRIAL - _rate_limiter._trial_count
+        trial_bucket = _rate_limiter._daily.get("__trial__", [])
+        trial_bucket = _rate_limiter._prune(trial_bucket, 86400)
+        remaining = max(0, RATE_LIMIT_TRIAL - len(trial_bucket))
         trial_notice = (
-            f"⚠️ TRIAL MODE — {remaining} free {'query' if remaining == 1 else 'queries'} remaining. "
-            f"Sign up for full access: {SIGNUP_URL}\n\n"
+            f"ℹ️ Free tier — {remaining}/{RATE_LIMIT_TRIAL} queries remaining today. "
+            f"Get an API key for higher limits: {API_KEY_URL}\n\n"
         )
 
     try:
@@ -497,6 +531,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await _tool_create_literature_review(safe_args)
         elif name == "search_by_entity":
             result = await _tool_search_by_entity(safe_args)
+        elif name == "search_grants":
+            result = await _tool_search_grants(safe_args)
         else:
             audit_log(name, arguments, success=False, duration_ms=0)
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -724,6 +760,78 @@ async def _tool_search_by_entity(args: dict[str, Any]) -> dict:
         "papers": papers[:20],
         "relationships": len(edges),
         "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — 1.3M+ entities, 109M+ links",
+    }
+
+
+async def _tool_search_grants(args: dict[str, Any]) -> dict:
+    """Search for grants/funding sources in the knowledge graph."""
+    query = args.get("query", "")
+    if len(query) < 2:
+        raise ValueError("Query must be at least 2 characters")
+
+    limit = min(int(args.get("limit", 20)), 50)
+
+    # Use the KG explore endpoint which already enriches with funder data
+    data = await _get("/api/v1/kg/explore", {"query": query, "max_nodes": limit})
+
+    nodes = data.get("nodes", [])
+    edges = data.get("edges", [])
+
+    # Extract funders and their funded papers
+    funders = []
+    funded_papers = []
+    funder_paper_links: dict[str, list[str]] = {}  # funder_uid -> [paper_titles]
+
+    for node in nodes:
+        if node.get("type") == "entity" and node.get("entityType") == "funder":
+            funder_info = {
+                "name": node.get("name"),
+                "country": (node.get("metadata") or {}).get("country", ""),
+                "description": node.get("description"),
+            }
+            funders.append(funder_info)
+            funder_paper_links[node.get("uid", "")] = []
+        elif node.get("type") == "paper":
+            funded_papers.append(_compact_paper(node))
+
+    # Map FUNDED edges to link funders to papers
+    node_map = {n.get("uid"): n for n in nodes}
+    for edge in edges:
+        if edge.get("label") == "FUNDED":
+            src = edge.get("source", "")
+            tgt = edge.get("target", "")
+            paper_node = node_map.get(tgt) or node_map.get(src)
+            funder_uid = src if src in funder_paper_links else tgt
+            if funder_uid in funder_paper_links and paper_node:
+                title = paper_node.get("title") or paper_node.get("name", "")
+                if title:
+                    funder_paper_links[funder_uid].append(title)
+
+    # Enrich funders with their paper list
+    for i, funder in enumerate(funders):
+        uid_candidates = [n.get("uid") for n in nodes
+                          if n.get("name") == funder["name"] and n.get("entityType") == "funder"]
+        if uid_candidates:
+            funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
+
+    # If no funders found directly, papers themselves may contain funding info
+    if not funders and funded_papers:
+        return {
+            "query": query,
+            "funders_found": 0,
+            "papers_with_funding": len(funded_papers),
+            "papers": funded_papers[:limit],
+            "note": "No specific funders found for this query. Try searching for a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
+            "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com)",
+        }
+
+    return {
+        "query": query,
+        "funders_found": len(funders),
+        "funded_papers_found": len(funded_papers),
+        "funders": funders[:limit],
+        "funded_papers": funded_papers[:limit],
+        "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — Grants & Funding data",
     }
 
 
