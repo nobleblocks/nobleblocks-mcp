@@ -60,8 +60,8 @@ USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
 # Rate limiting
-RATE_LIMIT_TRIAL = int(os.environ.get("RATE_LIMIT_TRIAL", "3"))  # lifetime without key (taste)
-RATE_LIMIT_FREE = int(os.environ.get("RATE_LIMIT_FREE", "100"))  # per day (free key)
+RATE_LIMIT_TRIAL = int(os.environ.get("RATE_LIMIT_TRIAL", "100"))  # per day without key (generous free tier)
+RATE_LIMIT_FREE = int(os.environ.get("RATE_LIMIT_FREE", "500"))  # per day (free key)
 RATE_LIMIT_PRO = int(os.environ.get("RATE_LIMIT_PRO", "5000"))  # per day (pro key)
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60"))
 
@@ -103,7 +103,6 @@ class RateLimiter:
     def __init__(self):
         self._daily: dict[str, list[float]] = {}  # key -> [timestamps]
         self._minute: dict[str, list[float]] = {}
-        self._trial_count: int = 0  # lifetime counter for no-key usage
 
     def _prune(self, bucket: list[float], window_seconds: float) -> list[float]:
         cutoff = time.time() - window_seconds
@@ -113,15 +112,19 @@ class RateLimiter:
         """Returns (allowed, reason). Raises nothing."""
         now = time.time()
 
-        # No API key: strict trial gate (3 queries lifetime, then require signup)
+        # No API key: generous daily limit (100/day) — no signup friction
         if not API_KEY:
-            self._trial_count += 1
-            if self._trial_count > RATE_LIMIT_TRIAL:
+            # Use daily window for trial (resets every 24h)
+            trial_bucket = self._daily.get("__trial__", [])
+            trial_bucket = self._prune(trial_bucket, 86400)
+            if len(trial_bucket) >= RATE_LIMIT_TRIAL:
                 return False, (
-                    f"Trial expired ({RATE_LIMIT_TRIAL} free queries used). "
-                    f"Get a free API key in 30 seconds: {SIGNUP_URL} → "
-                    f"then generate a key at {API_KEY_URL} and set NOBLEBLOCKS_API_KEY."
+                    f"Daily limit reached ({RATE_LIMIT_TRIAL} queries/day). "
+                    f"For unlimited access, generate an API key at {API_KEY_URL} "
+                    f"and set NOBLEBLOCKS_API_KEY in your MCP config."
                 )
+            trial_bucket.append(now)
+            self._daily["__trial__"] = trial_bucket
             return True, ""
 
         # Per-minute check
