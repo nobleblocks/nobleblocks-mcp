@@ -1,6 +1,6 @@
 [project]
 name = "nobleblocks-mcp"
-version = "2.0.22"
+version = "2.0.23"
 description = "Connect your AI assistant to 340M+ academic papers and a biomedical knowledge graph. Search, explore citations, find related work, and generate literature reviews — powered by NobleBlocks."
 requires-python = ">=3.10"
 license = {text = "MIT"}

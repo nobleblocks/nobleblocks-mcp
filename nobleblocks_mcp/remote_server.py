@@ -308,7 +308,16 @@ async def get_paper(paper_id: str) -> str:
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
-    data = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
+    try:
+        data = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return json.dumps({"error": f"Paper not found: {paper_id}"})
+        return json.dumps({"error": f"Paper lookup failed (HTTP {e.response.status_code})"})
+    except Exception as e:
+        logger.warning("get_paper error for %s: %s", paper_id, e)
+        return json.dumps({"error": "Paper lookup temporarily unavailable."})
+
     paper = data.get("paper") or data
     result = {
         **_compact_paper(paper, include_full=True),
@@ -379,10 +388,23 @@ async def get_citation_graph(
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
-    data = await _api_get(
-        "/api/v1/papers/citation-graph",
-        {"paperId": paper_id, "limit": min(limit, 50)},
-    )
+    try:
+        data = await _api_get(
+            "/api/v1/papers/citation-graph",
+            {"paperId": paper_id, "limit": min(limit, 50)},
+        )
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            return json.dumps({
+                "error": "Citation graph requires authentication. Please log in to NobleBlocks.",
+                "paper_id": paper_id,
+                "tip": "Use search_papers or get_paper tools which work without login.",
+            })
+        return json.dumps({"error": f"Citation graph request failed (HTTP {e.response.status_code})"})
+    except Exception as e:
+        logger.warning("get_citation_graph error: %s", e)
+        return json.dumps({"error": "Citation graph temporarily unavailable. Try get_paper instead."})
+
     result: dict[str, Any] = {"paper_id": paper_id}
     if direction in ("references", "both"):
         result["references"] = [_compact_paper(p) for p in (data.get("references") or [])[:limit]]
@@ -413,13 +435,26 @@ async def search_by_entity(
         return json.dumps({"error": "Query must be at least 2 characters"})
 
     max_nodes = max(10, min(max_nodes, 50))
-    data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": max_nodes})
+    try:
+        data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": max_nodes})
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 422:
+            return json.dumps({
+                "error": "Knowledge graph query not supported for this input. Try a different search term.",
+                "query": query,
+            })
+        return json.dumps({"error": f"Knowledge graph request failed (HTTP {e.response.status_code})"})
+    except Exception as e:
+        logger.warning("search_by_entity error: %s", e)
+        return json.dumps({"error": "Knowledge graph temporarily unavailable. Try search_papers instead."})
 
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
     entities = []
     papers = []
     for node in nodes:
+        if not isinstance(node, dict):
+            continue
         if node.get("type") == "entity":
             entities.append({
                 "name": node.get("name"),
@@ -463,7 +498,18 @@ async def search_grants(
         return json.dumps({"error": "Query must be at least 2 characters"})
 
     limit = max(1, min(limit, 50))
-    data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit})
+    try:
+        data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit})
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 422:
+            return json.dumps({
+                "error": "Grants query not supported for this input. Try a funder name (e.g. 'NIH', 'ERC').",
+                "query": query,
+            })
+        return json.dumps({"error": f"Grants search failed (HTTP {e.response.status_code})"})
+    except Exception as e:
+        logger.warning("search_grants error: %s", e)
+        return json.dumps({"error": "Grants search temporarily unavailable."})
 
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
@@ -473,6 +519,8 @@ async def search_grants(
     funder_paper_links: dict[str, list[str]] = {}
 
     for node in nodes:
+        if not isinstance(node, dict):
+            continue
         if node.get("type") == "entity" and node.get("entityType") == "funder":
             funder_info = {
                 "name": node.get("name"),
@@ -485,8 +533,10 @@ async def search_grants(
             funded_papers.append(_compact_paper(node))
 
     # Map FUNDED edges
-    node_map = {n.get("uid"): n for n in nodes}
+    node_map = {n.get("uid"): n for n in nodes if isinstance(n, dict)}
     for edge in edges:
+        if not isinstance(edge, dict):
+            continue
         if edge.get("label") == "FUNDED":
             src = edge.get("source", "")
             tgt = edge.get("target", "")
@@ -499,7 +549,7 @@ async def search_grants(
 
     for funder in funders:
         uid_candidates = [n.get("uid") for n in nodes
-                          if n.get("name") == funder["name"] and n.get("entityType") == "funder"]
+                          if isinstance(n, dict) and n.get("name") == funder["name"] and n.get("entityType") == "funder"]
         if uid_candidates:
             funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
 
