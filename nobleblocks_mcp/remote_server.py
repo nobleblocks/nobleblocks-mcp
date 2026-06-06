@@ -762,6 +762,51 @@ async def health_check(request: Request) -> JSONResponse:
     })
 
 
+async def register_shim(request: Request):
+    """
+    Shim for POST /register.
+
+    The MCP Python SDK's RegistrationHandler requires grant_types to include
+    BOTH 'authorization_code' AND 'refresh_token'. Claude only sends
+    ['authorization_code'], causing a 400 that breaks the entire auth flow.
+
+    This shim patches the body before the SDK handler sees it.
+    """
+    import json as _json
+    from mcp.server.auth.handlers.register import RegistrationHandler
+    from mcp.server.auth.settings import ClientRegistrationOptions
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Inject refresh_token so the SDK validation passes
+    gt = set(body.get("grant_types") or ["authorization_code"])
+    gt.add("authorization_code")
+    gt.add("refresh_token")
+    body["grant_types"] = list(gt)
+
+    # Rebuild a patched Request with the modified body
+    patched_body = _json.dumps(body).encode()
+
+    async def patched_receive():
+        return {"type": "http.request", "body": patched_body, "more_body": False}
+
+    patched_request = Request(request.scope, patched_receive)
+
+    # Delegate to the SDK's handler directly
+    handler = RegistrationHandler(
+        provider=oauth_provider,
+        options=ClientRegistrationOptions(
+            enabled=True,
+            valid_scopes=["search", "review", "graph"],
+            default_scopes=["search"],
+        ),
+    )
+    return await handler.handle(patched_request)
+
+
 async def info_page(request: Request) -> HTMLResponse:
     """Root page with info about the MCP server."""
     return HTMLResponse("""<!DOCTYPE html>
@@ -804,6 +849,7 @@ def create_app() -> Starlette:
         Route("/consent", consent_page, methods=["GET"]),
         Route("/oauth/login", oauth_login, methods=["POST"]),
         Route("/oauth/login/google", oauth_login_google, methods=["POST"]),
+        Route("/register", register_shim, methods=["POST"]),  # shim: injects refresh_token for Claude
     ]
 
     # Mount MCP app and add custom routes
