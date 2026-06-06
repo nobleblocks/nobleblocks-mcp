@@ -107,6 +107,34 @@ def static_checks() -> None:
             if '"phase": "fast"' not in mcp_text else "",
     )
 
+    # ── 1e2. TRIAL QUOTA: must be ≥ 100 (NEVER reduce back to 3!)
+    # The old 3-query lifetime limit was terrible UX. Users must get 100/day minimum.
+    trial_match = re.search(r'RATE_LIMIT_TRIAL.*?(\d+)', mcp_text)
+    trial_val = int(trial_match.group(1)) if trial_match else 0
+    check(
+        f"server.py: RATE_LIMIT_TRIAL ≥ 100 (got {trial_val})",
+        trial_val >= 100,
+        "REGRESSION: trial limit was reduced! Must be ≥ 100/day — search doesn't cost AI"
+            if trial_val < 100 else "",
+    )
+
+    # ── 1e3. TRIAL QUOTA: must use daily window not lifetime counter
+    check(
+        "server.py: trial uses daily reset (not lifetime block)",
+        "_prune" in mcp_text and "86400" in mcp_text and "__trial__" in mcp_text,
+        "REGRESSION: trial is lifetime counter again — must reset daily (86400s window)"
+            if "__trial__" not in mcp_text else "",
+    )
+
+    # ── 1e4. FREE KEY daily limit must be ≥ 500
+    free_match = re.search(r'RATE_LIMIT_FREE.*?(\d+)', mcp_text)
+    free_val = int(free_match.group(1)) if free_match else 0
+    check(
+        f"server.py: RATE_LIMIT_FREE ≥ 500 (got {free_val})",
+        free_val >= 500,
+        "REGRESSION: free-key limit reduced! Must be ≥ 500/day" if free_val < 500 else "",
+    )
+
     # ── 1f. MCP remote_server.py: must pass phase=fast
     remote_text = MCP_REMOTE_SERVER.read_text()
     check(
@@ -114,6 +142,36 @@ def static_checks() -> None:
         '"phase": "fast"' in remote_text,
         'MISSING "phase": "fast"' if '"phase": "fast"' not in remote_text else "",
     )
+
+    # ── 1f2. REMOTE SERVER: must send NB_INTERNAL_TOKEN (bypasses all rate limits)
+    check(
+        "remote_server.py: uses NB_INTERNAL_TOKEN in headers",
+        "NB_INTERNAL_TOKEN" in remote_text and "x-internal-token" in remote_text,
+        "REGRESSION: internal token removed — remote server will hit trial limits!"
+            if "NB_INTERNAL_TOKEN" not in remote_text else "",
+    )
+
+    # ── 1f3. FRONTEND TRIAL LIMIT: check mcp-api-key.ts has ≥ 100
+    mcp_key_file = FRONTEND / "lib" / "mcp-api-key.ts"
+    if mcp_key_file.exists():
+        mcp_key_text = mcp_key_file.read_text()
+        fe_trial_match = re.search(r'TRIAL_LIMIT\s*=\s*(\d+)', mcp_key_text)
+        fe_trial_val = int(fe_trial_match.group(1)) if fe_trial_match else 0
+        check(
+            f"mcp-api-key.ts: TRIAL_LIMIT ≥ 100 (got {fe_trial_val})",
+            fe_trial_val >= 100,
+            "REGRESSION: frontend trial limit reduced! Must be ≥ 100/day"
+                if fe_trial_val < 100 else "",
+        )
+        # Must use daily reset, not lifetime
+        check(
+            "mcp-api-key.ts: trial uses daily reset (resetAt field)",
+            "resetAt" in mcp_key_text,
+            "REGRESSION: frontend trial is lifetime counter — must reset daily"
+                if "resetAt" not in mcp_key_text else "",
+        )
+    else:
+        check("mcp-api-key.ts: file exists", False, "MISSING lib/mcp-api-key.ts")
 
     # ── 1g. MCP server.py: find_similar has text-search fallback
     check(
