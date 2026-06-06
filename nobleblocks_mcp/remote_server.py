@@ -218,8 +218,18 @@ async def search_papers(
 ) -> str:
     """Search 340M+ academic papers, patents, clinical trials, and grants from PubMed, arXiv, Crossref, ClinicalTrials.gov, OpenAlex, and dozens of other sources. Returns ranked results with title, authors, year, abstract, citations, and DOI. Supports filtering by open access status, document type (journal-article, review, preprint, conference, book-chapter, dataset, patent, clinical-trial), author name, language, source database, citation count, and year range."""
     query = sanitize_input(query)
+    # Normalize whitespace (collapse multiple spaces, trim)
+    query = " ".join(query.split())
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
+
+    # Validate min_citations
+    if min_citations is not None and min_citations < 0:
+        return json.dumps({"error": "min_citations must be a non-negative integer"})
+
+    # Validate year range
+    if min_year is not None and max_year is not None and min_year > max_year:
+        return json.dumps({"error": f"Invalid year range: min_year ({min_year}) cannot be greater than max_year ({max_year})"})
 
     effective_limit = min(limit, 50)
     data = await _api_get(
@@ -443,6 +453,11 @@ async def search_by_entity(
                 "error": "Knowledge graph query not supported for this input. Try a different search term.",
                 "query": query,
             })
+        if e.response.status_code in (502, 503, 504):
+            return json.dumps({
+                "error": "Knowledge graph is temporarily overloaded. Try search_papers instead, or retry in a moment.",
+                "query": query,
+            })
         return json.dumps({"error": f"Knowledge graph request failed (HTTP {e.response.status_code})"})
     except Exception as e:
         logger.warning("search_by_entity error: %s", e)
@@ -499,11 +514,27 @@ async def search_grants(
 
     limit = max(1, min(limit, 50))
     try:
-        data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit})
+        data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit, "entity_type": "funder"})
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 422:
+            # KG explore doesn't support this query format; fall back to paper search with funder context
+            try:
+                search_data = await _api_get(
+                    "/api/v1/papers/search",
+                    {"query": f"{query} funding grant", "limit": limit, "phase": "fast"},
+                )
+                papers = search_data.get("papers") or search_data.get("results") or []
+                return json.dumps({
+                    "query": query,
+                    "note": "Grant-specific search returned papers mentioning funding. For specific funder data, try searching by funder name (e.g. 'NIH', 'ERC', 'Wellcome Trust').",
+                    "papers": [_compact_paper(p) for p in papers[:limit]],
+                    "total_found": search_data.get("total", len(papers)),
+                    "attribution": "NobleBlocks (nobleblocks.com)",
+                }, indent=2, default=str)
+            except Exception:
+                pass
             return json.dumps({
-                "error": "Grants query not supported for this input. Try a funder name (e.g. 'NIH', 'ERC').",
+                "error": "Grants search not available for this query. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
                 "query": query,
             })
         return json.dumps({"error": f"Grants search failed (HTTP {e.response.status_code})"})
