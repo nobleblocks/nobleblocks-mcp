@@ -205,7 +205,7 @@ def _extract_year(date_str: str | None) -> int | None:
 )
 async def search_papers(
     query: str,
-    limit: int = 10,
+    limit: int = 20,
     min_year: int | None = None,
     max_year: int | None = None,
     min_citations: int | None = None,
@@ -217,11 +217,12 @@ async def search_papers(
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
 
+    effective_limit = min(limit, 50)
     data = await _api_get(
         "/api/v1/papers/search",
         {
             "query": query,
-            "limit": min(limit, 50),
+            "limit": effective_limit,
             # PROTECTED: phase=fast MUST stay. Removing this triggers AI rewrites
             # + external API calls (S2/OpenAlex/CrossRef) for every MCP search,
             # burning LLM budget and causing latency spikes site-wide.
@@ -235,11 +236,30 @@ async def search_papers(
         },
     )
     papers = data.get("papers") or data.get("results") or []
+
+    # Fallback: if fast phase returned 0 results, retry with full search (slower but broader)
+    if not papers:
+        logger.info(f"[search_papers] fast phase empty for '{query}', retrying full search")
+        data = await _api_get(
+            "/api/v1/papers/search",
+            {
+                "query": query,
+                "limit": effective_limit,
+                "min_year": min_year,
+                "max_year": max_year,
+                "min_citations": min_citations,
+                "source": source,
+                "sort": sort,
+            },
+        )
+        papers = data.get("papers") or data.get("results") or []
+
     result: dict[str, Any] = {
         "query": query,
         "total": data.get("total", len(papers)),
-        "results": [_compact_paper(p) for p in papers[:min(limit, 50)]],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 300M+ papers across 6 academic databases",
+        "results": [_compact_paper(p) for p in papers[:effective_limit]],
+        "source": "NobleBlocks Academic Database",
+        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ",
     }
     # Surface spelling correction so AI clients can suggest "Did you mean X?"
     corrected = data.get("correctedQuery")

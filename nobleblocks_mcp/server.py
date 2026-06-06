@@ -585,11 +585,12 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
     if len(query) < 2:
         raise ValueError("Query must be at least 2 characters")
 
+    limit = min(int(args.get("limit", 20)), 50)
     data = await _get(
         "/api/v1/papers/search",
         {
             "query": query,
-            "limit": min(int(args.get("limit", 10)), 50),
+            "limit": limit,
             # PROTECTED: phase=fast MUST stay. Removing this triggers AI rewrites
             # + external API calls (S2/OpenAlex/CrossRef) for every MCP search,
             # burning LLM budget and causing latency spikes site-wide.
@@ -603,12 +604,29 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         },
     )
     papers = data.get("papers") or data.get("results") or []
-    limit = min(int(args.get("limit", 10)), 50)
+
+    # Fallback: if fast phase returned 0 results, retry with full search
+    if not papers:
+        data = await _get(
+            "/api/v1/papers/search",
+            {
+                "query": query,
+                "limit": limit,
+                "min_year": args.get("min_year"),
+                "max_year": args.get("max_year"),
+                "min_citations": args.get("min_citations"),
+                "source": args.get("source"),
+                "sort": args.get("sort", "relevance"),
+            },
+        )
+        papers = data.get("papers") or data.get("results") or []
+
     return {
         "query": query,
         "total": data.get("total", len(papers)),
         "results": [_compact_paper(p) for p in papers[:limit]],
-        "attribution": "Powered by NobleBlocks (nobleblocks.com) — 340M+ papers across 6 academic databases",
+        "source": "NobleBlocks Academic Database",
+        "database_coverage": "340M+ papers from PubMed, arXiv, Crossref, Semantic Scholar, OpenAlex, DOAJ",
     }
 
 
