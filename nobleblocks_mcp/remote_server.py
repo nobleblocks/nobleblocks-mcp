@@ -579,11 +579,13 @@ async def get_paper(paper_id: str) -> str:
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
-    lookup_params = _detect_paper_id_params(paper_id)
+    # The frontend /api/v1/papers/lookup route auto-detects the identifier type
+    # from a single `id` query param — it does NOT accept typed params like `doi`.
+    # Passing typed params yields HTTP 400 "id parameter is required".
     try:
-        data = await _api_get("/api/v1/papers/lookup", lookup_params)
+        data = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
+        if e.response.status_code in (400, 404):
             # Fallback: if the lookup by external ID failed, try searching by
             # title/query — the paper may exist but lack the specific external ID
             try:
@@ -726,9 +728,10 @@ async def get_citation_graph(
         pass
 
     if internal_id is None:
-        # Look up by external ID to get internal ID
+        # Look up by external ID to get internal ID. The frontend route auto-detects
+        # the identifier type from a single `id` param (typed params return HTTP 400).
         try:
-            lookup = await _api_get("/api/v1/papers/lookup", _detect_paper_id_params(paper_id))
+            lookup = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
             internal_id = (lookup.get("paper") or lookup).get("id")
         except Exception:
             pass
@@ -910,26 +913,41 @@ async def search_by_entity(
                 )
             papers.append(paper)
 
-    # If the KG returned only garbage/empty entities AND no papers, fall back to
-    # paper search so the user still gets useful, relevant results.
-    if not entities and not papers:
+    # The KG fuzzy-matches natural-language queries and frequently returns papers
+    # with zero relation to the query (e.g. Raman spectroscopy for a "Jennifer
+    # Doudna CRISPR" search). Drop papers that share no keyword with the query.
+    relevant_papers = [p for p in papers if _has_query_relevance(p, query)]
+    if relevant_papers:
+        papers = relevant_papers
+    else:
+        # Nothing the KG returned is relevant — discard the noise and let the
+        # fallback below supply relevant papers via direct search.
+        papers = []
+
+    # If we have no relevant papers from the KG, supplement with a relevance-ranked
+    # paper search so the user always gets useful, on-topic papers (keeping any
+    # valid entities the KG did resolve).
+    if not papers:
         try:
             fb = await _api_get(
                 "/api/v1/papers/search",
                 {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"},
             )
             fb_papers = fb.get("papers") or fb.get("results") or []
+            fb_papers = [p for p in fb_papers if _has_query_relevance(p, query)]
             if fb_papers:
-                return json.dumps({
-                    "query": query,
-                    "entities_found": 0,
-                    "papers_found": len(fb_papers),
-                    "entities": [],
-                    "papers": [_compact_paper(p) for p in fb_papers[:max_nodes]],
-                    "relationships": 0,
-                    "note": "No clean knowledge-graph entities for this query. Showing relevant papers instead.",
-                    "attribution": "NobleBlocks (nobleblocks.com)",
-                }, indent=2, default=str)
+                papers = [_compact_paper(p) for p in fb_papers[:max_nodes]]
+                if not entities:
+                    return json.dumps({
+                        "query": query,
+                        "entities_found": 0,
+                        "papers_found": len(papers),
+                        "entities": [],
+                        "papers": papers,
+                        "relationships": 0,
+                        "note": "No clean knowledge-graph entities for this query. Showing relevant papers instead.",
+                        "attribution": "NobleBlocks (nobleblocks.com)",
+                    }, indent=2, default=str)
         except Exception:
             pass
 
@@ -1078,8 +1096,12 @@ async def search_grants(
         if uid_candidates:
             funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
 
-    if not funders and not funded_papers:
-        # Fallback: search for papers that mention the funder/grant in title/abstract
+    if not funders:
+        # The knowledge graph has no funder entities yet, so any paper nodes it
+        # returned for this query are high-degree noise (unrelated to funding).
+        # Discard them and run a relevance-ranked search for the funding topic so
+        # the user gets papers actually related to their query.
+        relevant_papers = []
         try:
             grant_query = f"{query} funding grant"
             fallback_data = await _api_get(
@@ -1087,27 +1109,19 @@ async def search_grants(
                 {"query": grant_query, "limit": limit, "phase": "fast", "sort": "relevance"},
             )
             fallback_papers = fallback_data.get("papers") or fallback_data.get("results") or []
-            funded_papers = [_compact_paper(p) for p in fallback_papers[:limit]]
+            # Keep only papers with genuine query relevance (drop generic noise)
+            fallback_papers = [p for p in fallback_papers if _has_query_relevance(p, query)]
+            relevant_papers = [_compact_paper(p) for p in fallback_papers[:limit]]
         except Exception:
             pass
 
         result = {
             "query": query,
             "funders_found": 0,
-            "papers_with_funding": len(funded_papers),
-            "papers": funded_papers[:limit],
+            "papers_with_funding": len(relevant_papers),
+            "papers": relevant_papers[:limit],
             "note": "No specific funder entities found in knowledge graph. Showing papers related to this funding query. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
-            "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com)",
-        }
-        return json.dumps(result, indent=2, default=str)
-    elif not funders and funded_papers:
-        result = {
-            "query": query,
-            "funders_found": 0,
-            "papers_with_funding": len(funded_papers),
-            "papers": funded_papers[:limit],
-            "note": "No specific funders found. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
-            "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com)",
+            "attribution": "NobleBlocks (nobleblocks.com)",
         }
         return json.dumps(result, indent=2, default=str)
 

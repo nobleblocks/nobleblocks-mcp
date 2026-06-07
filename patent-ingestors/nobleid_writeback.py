@@ -85,71 +85,83 @@ def ensure_index(conn):
 
 
 def get_pending_count(conn):
-    """Count papers that need noble_id applied (have a match in _writeback_stage but noble_id IS NULL)."""
+    """Estimate staging vs already-applied rows WITHOUT slow count(*) full scans.
+
+    Both _writeback_stage (457M) and papers (352M) are too large for an exact
+    count(*) at startup — it added minutes of dead time before any progress.
+    We use the planner's reltuples estimate for both, which is instant.
+    """
     with conn.cursor() as cur:
-        # Use estimate for speed on 100M+ tables
-        cur.execute("""
-            SELECT reltuples::bigint FROM pg_class WHERE relname = '_writeback_stage'
-        """)
-        stage_est = cur.fetchone()[0]
-        cur.execute("""
-            SELECT count(*) FROM papers WHERE noble_id IS NOT NULL
-        """)
-        already_done = cur.fetchone()[0]
-        return stage_est, already_done
+        cur.execute(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = '_writeback_stage'"
+        )
+        row = cur.fetchone()
+        stage_est = int(row[0]) if row and row[0] else 0
+        # Estimate already-applied rows via the planner stats on a partial-ish proxy:
+        # there's no cheap exact "noble_id IS NOT NULL" estimate, so report 0 and let
+        # apply_batch's idempotent NULL guard skip already-done rows during the run.
+        already_done = 0
+    return stage_est, already_done
 
 
 def run_writeback(conn):
     """
-    Batch writeback using a temp table approach:
-    1. Select a batch of DOIs from _writeback_stage that haven't been applied yet
-    2. UPDATE papers SET noble_id = ws.noble_id WHERE doi matches
-    3. Repeat until done
+    Keyset-paginated writeback driven by the (smaller) staging table.
+
+    The previous implementation opened a single server-side cursor over a
+    full JOIN of _writeback_stage ⋈ papers (457M × 352M rows). That hash join
+    must materialize before yielding the first row, so it never produced output
+    and effectively hung. Instead we page through _writeback_stage by its
+    indexed `doi` column in BATCH_SIZE chunks and run one indexed UPDATE per
+    chunk (papers.doi is indexed). This streams steadily and is restart-safe
+    (only updates rows where papers.noble_id IS NULL).
     """
     total_updated = 0
     batch_num = 0
     start_time = time.time()
+    last_doi = ""  # keyset cursor — strictly increasing over the indexed doi column
 
-    # Use a server-side cursor to iterate through _writeback_stage efficiently
-    # We join against papers to find only un-applied rows
-    with conn.cursor("writeback_cursor") as read_cur:
-        read_cur.itersize = BATCH_SIZE
-        read_cur.execute("""
-            SELECT ws.doi, ws.noble_id
-            FROM _writeback_stage ws
-            JOIN papers p ON p.doi = ws.doi
-            WHERE p.noble_id IS NULL
-        """)
+    while True:
+        # Pull the next page of (doi, noble_id) from the staging table using the
+        # idx_writeback_stage_doi index. Keyset pagination avoids OFFSET scans.
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT doi, noble_id
+                FROM _writeback_stage
+                WHERE doi > %s
+                ORDER BY doi
+                LIMIT %s
+                """,
+                (last_doi, BATCH_SIZE),
+            )
+            batch = cur.fetchall()
+        conn.commit()
 
-        batch = []
-        for row in read_cur:
-            batch.append(row)
-            if len(batch) >= BATCH_SIZE:
-                updated = apply_batch(conn, batch)
-                total_updated += updated
-                batch_num += 1
-                batch = []
+        if not batch:
+            break
 
-                if batch_num % PROGRESS_INTERVAL == 0:
-                    elapsed = time.time() - start_time
-                    rate = total_updated / elapsed if elapsed > 0 else 0
-                    log.info(
-                        f"Batch {batch_num}: {total_updated:,} updated "
-                        f"({rate:.0f} rows/sec, elapsed {elapsed:.0f}s)"
-                    )
+        last_doi = batch[-1][0]
+        updated = apply_batch(conn, batch)
+        total_updated += updated
+        batch_num += 1
 
-                time.sleep(SLEEP_BETWEEN)
+        if batch_num % PROGRESS_INTERVAL == 0:
+            elapsed = time.time() - start_time
+            rate = total_updated / elapsed if elapsed > 0 else 0
+            log.info(
+                f"Batch {batch_num}: {total_updated:,} updated "
+                f"(cursor doi>{last_doi[:32]!r}, {rate:.0f} rows/sec, "
+                f"elapsed {elapsed:.0f}s)"
+            )
 
-        # Final partial batch
-        if batch:
-            updated = apply_batch(conn, batch)
-            total_updated += updated
-            batch_num += 1
+        time.sleep(SLEEP_BETWEEN)
 
     elapsed = time.time() - start_time
+    rate = total_updated / elapsed if elapsed > 0 else 0
     log.info(
         f"COMPLETE: {total_updated:,} papers updated in {batch_num} batches "
-        f"({elapsed:.0f}s, {total_updated/elapsed:.0f} rows/sec)"
+        f"({elapsed:.0f}s, {rate:.0f} rows/sec)"
     )
     return total_updated
 
