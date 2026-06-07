@@ -48,7 +48,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.42")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.43")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -324,6 +324,71 @@ def _has_strong_query_relevance(p: dict, query: str) -> bool:
 def _norm_text(s: str) -> str:
     """Lowercase + strip non-alphanumeric for fuzzy title/keyword comparison."""
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _filter_noise_sources(papers: list, query: str) -> list:
+    """Remove Zenodo dataset records and other noise sources that aren't
+    genuine research papers unless the query specifically targets them."""
+    if not papers:
+        return papers
+    nq = _norm_text(query)
+    # If user is explicitly looking for datasets/zenodo, don't filter
+    if "zenodo" in nq or "dataset" in nq or "data repository" in nq:
+        return papers
+
+    NOISE_VENUES = {"zenodo", "figshare", "dryad", "dataverse", "mendeley data"}
+    filtered = []
+    for p in papers:
+        venue = _norm_text(p.get("venue") or p.get("source") or p.get("journal_name") or "")
+        title = _norm_text(p.get("title") or p.get("name") or "")
+        doi = (p.get("doi") or p.get("DOI") or "").lower()
+        # Check venue, DOI prefix, and title patterns for dataset noise
+        is_noise = (
+            any(nv in venue for nv in NOISE_VENUES)
+            or "zenodo" in doi
+            or "figshare" in doi
+            or ("design files" in title and not _has_query_relevance(p, query))
+            or ("dataset" in title and "dataset" not in nq and not _has_query_relevance(p, query))
+        )
+        if not is_noise:
+            filtered.append(p)
+    # Don't return empty if ALL results were noise — return original
+    return filtered if filtered else papers
+
+
+def _clean_entity_name(name: str) -> str:
+    """Clean up entity names that are sentence fragments from extraction artifacts."""
+    if not name:
+        return name
+    # Remove leading articles that are extraction artifacts ("a CRISPR Therapeutics.")
+    name = re.sub(r'^\s*(?:a|an|the)\s+', '', name, flags=re.IGNORECASE)
+    # Remove trailing punctuation (periods, commas) that are sentence artifacts
+    name = re.sub(r'[.,;:]+\s*$', '', name)
+    # Strip whitespace
+    return name.strip()
+
+
+def _deduplicate_papers(papers: list) -> list:
+    """Deduplicate papers by DOI (keep higher citation count version)."""
+    if not papers:
+        return papers
+    seen_dois: dict[str, int] = {}  # doi -> index in result list
+    result = []
+    for p in papers:
+        doi = (p.get("doi") or "").lower().strip()
+        if doi and doi in seen_dois:
+            # Keep the one with more citations
+            existing_idx = seen_dois[doi]
+            existing_cites = result[existing_idx].get("citations") or 0
+            new_cites = p.get("citations") or 0
+            if new_cites > existing_cites:
+                result[existing_idx] = p
+            continue
+        idx = len(result)
+        result.append(p)
+        if doi:
+            seen_dois[doi] = idx
+    return result
 
 
 def _rerank_by_title_match(papers: list, query: str) -> list:
@@ -716,6 +781,7 @@ async def find_similar(query: str, limit: int = 10) -> str:
             {"query": query, "limit": effective_limit},
         )
         papers = data.get("papers") or data.get("results") or []
+        papers = _filter_noise_sources(papers, query)
         result = {
             "query": query,
             "results": [_compact_paper(p) for p in papers],
@@ -729,6 +795,7 @@ async def find_similar(query: str, limit: int = 10) -> str:
             {"query": query, "limit": effective_limit, "sort": "relevance"},
         )
         papers = data.get("papers") or data.get("results") or []
+        papers = _filter_noise_sources(papers, query)
         papers = _rerank_by_title_match(papers, query)
         result = {
             "query": query,
@@ -916,7 +983,7 @@ async def search_by_entity(
             continue
         if node.get("type") == "entity":
             # Drop garbage entities: email footers, ZIP codes, partial addresses
-            name = node.get("name", "")
+            name = _clean_entity_name(node.get("name", ""))
             if _is_garbage_entity(name):
                 continue
             # Drop entities that only prefix-match a single query token (e.g.
@@ -1020,12 +1087,19 @@ async def search_by_entity(
                     p["year"] = sp.get("year")
                 if not p.get("doi"):
                     p["doi"] = sp.get("doi") or sp.get("DOI")
+                if not p.get("venue"):
+                    p["venue"] = sp.get("venue") or sp.get("source") or sp.get("journal_name") or (sp.get("journal") if isinstance(sp.get("journal"), str) else (sp.get("journal") or {}).get("name"))
+                if not p.get("url"):
+                    p["url"] = _build_url(sp)
                 if not p.get("citations"):
                     cites = sp.get("citationCount") or sp.get("citation_count") or sp.get("cited_by_count")
                     if cites:
                         p["citations"] = cites
         except Exception:
             pass  # Enrichment is best-effort
+
+    # Deduplicate papers with identical DOIs (KG often has duplicate entries)
+    papers = _deduplicate_papers(papers)
 
     result = {
         "query": query,
@@ -1324,6 +1398,28 @@ async def create_literature_review(
             "attribution": "Generated by NobleBlocks AI Writer (nobleblocks.com)",
         }
         return json.dumps(result, indent=2, default=str)
+    except httpx.TimeoutException as e:
+        logger.warning(f"[create_literature_review] Timeout after 180s: {e}, falling back to search")
+        try:
+            search_data = await _api_get(
+                "/api/v1/papers/search",
+                {"query": topic, "limit": num_papers, "phase": "fast", "sort": "citations"},
+            )
+            papers = search_data.get("papers") or search_data.get("results") or []
+        except Exception:
+            papers = []
+        note = (
+            "Literature review generation timed out (AI model took too long). "
+            "This usually succeeds on retry. Here are the top-cited papers for manual synthesis. "
+            "Create a full AI review at: https://www.nobleblocks.com/deep-review"
+        )
+        return json.dumps({
+            "note": note,
+            "topic": topic,
+            "papers": [_compact_paper(p) for p in papers[:num_papers]],
+            "total_found": len(papers),
+            "attribution": "Powered by NobleBlocks (nobleblocks.com)",
+        }, indent=2, default=str)
     except Exception as e:
         err_msg = str(e)
         # Fallback: if the notebook API fails, do a search and return papers for manual synthesis
