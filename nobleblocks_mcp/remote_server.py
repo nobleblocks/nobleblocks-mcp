@@ -257,7 +257,8 @@ def _detect_paper_id_params(paper_id: str) -> dict:
 
 
 def _is_figshare_dataset(p: dict) -> bool:
-    """Detect Figshare/generic datasets which often carry inflated citation counts."""
+    """Detect Figshare datasets and generic repository tools (publCIF etc.)
+    which often carry inflated citation counts."""
     if not isinstance(p, dict):
         return False
     doi = (p.get("doi") or p.get("DOI") or "").lower()
@@ -266,10 +267,33 @@ def _is_figshare_dataset(p: dict) -> bool:
     venue = (p.get("venue") or p.get("source") or "").lower()
     if "figshare" in venue:
         return True
+    title = (p.get("title") or p.get("name") or "").lower()
+    # publCIF and similar generic data tools inflate citation metrics
+    if any(kw in title for kw in ("publcif", "olex2", "shelxl", "platon")):
+        return True
     doc_type = (p.get("type") or p.get("doc_type") or p.get("documentType") or "").lower()
     if doc_type == "dataset":
         return True
     return False
+
+
+def _has_query_relevance(p: dict, query: str) -> bool:
+    """Check that a paper has at least minimal relevance to the query.
+    Used as a relevance floor when sorting by citations to filter out off-topic
+    highly-cited papers (e.g. generic crystallography tools in a drug query)."""
+    if not isinstance(p, dict) or not query:
+        return True
+    nq = _norm_text(query)
+    q_words = [w for w in nq.split() if len(w) >= 3]
+    if not q_words:
+        return True
+
+    title = _norm_text(p.get("title") or p.get("name") or "")
+    abstract = _norm_text(p.get("abstract") or "")
+    text = title + " " + abstract
+
+    matches = sum(1 for w in q_words if w in text)
+    return matches >= 1
 
 
 def _norm_text(s: str) -> str:
@@ -499,6 +523,13 @@ async def search_papers(
         if filtered:
             papers = filtered
 
+    # When sorting by citations, apply a relevance floor to prevent highly-cited
+    # but entirely off-topic papers (e.g. publCIF, generic data tools) from dominating.
+    if sort == "citations" and query:
+        filtered = [p for p in papers if _has_query_relevance(p, query)]
+        if len(filtered) >= min(3, len(papers)):
+            papers = filtered
+
     # Light relevance re-rank: surface exact-title / full-keyword matches so
     # specific queries (paper titles, drug names) aren't buried by fuzzy hits.
     if sort == "relevance":
@@ -579,9 +610,9 @@ async def get_paper(paper_id: str) -> str:
         "attribution": "Powered by NobleBlocks (nobleblocks.com)",
     }
 
-    # Enrich: lookup often returns citations=0 / missing venue. Search by title
-    # to recover the real citation count and venue from the indexed corpus.
-    if result.get("title") and (not result.get("citations") or not result.get("venue")):
+    # Enrich: cross-check citation count with search (lookup can have stale data).
+    # Always prefer the higher count (freshest data source wins).
+    if result.get("title"):
         try:
             search_data = await _api_get(
                 "/api/v1/papers/search",
@@ -595,15 +626,17 @@ async def get_paper(paper_id: str) -> str:
                     match = sp
                     break
             if match is None and cand:
-                match = cand[0]  # best-effort: top hit
+                # Check first result matches reasonably
+                if _norm_text(cand[0].get("title") or "")[:40] == nt[:40]:
+                    match = cand[0]
             if match:
-                if not result.get("citations"):
-                    enriched = _first_non_none(
-                        match.get("citationCount"), match.get("citation_count"),
-                        match.get("cited_by_count"), match.get("numCitations"),
-                    )
-                    if enriched:
-                        result["citations"] = enriched
+                enriched = _first_non_none(
+                    match.get("citationCount"), match.get("citation_count"),
+                    match.get("cited_by_count"), match.get("numCitations"),
+                )
+                # Always take the HIGHER citation count
+                if enriched and enriched > result.get("citations", 0):
+                    result["citations"] = enriched
                 if not result.get("venue"):
                     result["venue"] = (
                         match.get("venue") or match.get("source")
@@ -900,6 +933,46 @@ async def search_by_entity(
         except Exception:
             pass
 
+    # Best-effort batch enrichment for papers missing critical metadata
+    # (KG nodes often lack authors, year, DOI). Search by title to fill gaps.
+    papers_needing_enrichment = [
+        p for p in papers
+        if p.get("title") and (not p.get("authors") or not p.get("year") or not p.get("doi"))
+    ]
+    if papers_needing_enrichment and len(papers_needing_enrichment) <= 10:
+        try:
+            enrichment_tasks = []
+            for p in papers_needing_enrichment:
+                enrichment_tasks.append(
+                    _api_get("/api/v1/papers/search", {"query": p["title"], "limit": 1, "phase": "fast"})
+                )
+            enrichment_results = await asyncio.gather(*enrichment_tasks, return_exceptions=True)
+            for p, enrich_result in zip(papers_needing_enrichment, enrichment_results):
+                if isinstance(enrich_result, Exception) or not isinstance(enrich_result, dict):
+                    continue
+                search_papers_list = enrich_result.get("papers") or enrich_result.get("results") or []
+                if not search_papers_list:
+                    continue
+                sp = search_papers_list[0]
+                sp_title = _norm_text(sp.get("title") or "")
+                p_title = _norm_text(p.get("title") or "")
+                if not sp_title or not p_title or sp_title[:40] != p_title[:40]:
+                    continue
+                if not p.get("authors"):
+                    raw_a = sp.get("authors") or []
+                    if isinstance(raw_a, list):
+                        p["authors"] = [a.get("name") if isinstance(a, dict) else str(a) for a in raw_a][:8]
+                if not p.get("year"):
+                    p["year"] = sp.get("year")
+                if not p.get("doi"):
+                    p["doi"] = sp.get("doi") or sp.get("DOI")
+                if not p.get("citations"):
+                    cites = sp.get("citationCount") or sp.get("citation_count") or sp.get("cited_by_count")
+                    if cites:
+                        p["citations"] = cites
+        except Exception:
+            pass  # Enrichment is best-effort
+
     result = {
         "query": query,
         "entities_found": len(entities),
@@ -1005,7 +1078,29 @@ async def search_grants(
         if uid_candidates:
             funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
 
-    if not funders and funded_papers:
+    if not funders and not funded_papers:
+        # Fallback: search for papers that mention the funder/grant in title/abstract
+        try:
+            grant_query = f"{query} funding grant"
+            fallback_data = await _api_get(
+                "/api/v1/papers/search",
+                {"query": grant_query, "limit": limit, "phase": "fast", "sort": "relevance"},
+            )
+            fallback_papers = fallback_data.get("papers") or fallback_data.get("results") or []
+            funded_papers = [_compact_paper(p) for p in fallback_papers[:limit]]
+        except Exception:
+            pass
+
+        result = {
+            "query": query,
+            "funders_found": 0,
+            "papers_with_funding": len(funded_papers),
+            "papers": funded_papers[:limit],
+            "note": "No specific funder entities found in knowledge graph. Showing papers related to this funding query. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
+            "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com)",
+        }
+        return json.dumps(result, indent=2, default=str)
+    elif not funders and funded_papers:
         result = {
             "query": query,
             "funders_found": 0,
@@ -1025,6 +1120,109 @@ async def search_grants(
         "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — Grants & Funding data",
     }
     return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool(
+    annotations={
+        "title": "Evaluate Product Claims",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def evaluate_product_claims(
+    product_name: str = "",
+    ingredients: str = "",
+    product_url: str = "",
+) -> str:
+    """Evaluate health supplement, skincare, or functional food claims against 341M+ peer-reviewed papers. Returns an evidence score (0-100) per ingredient, study counts, dose warnings, and top clinical studies. Use when someone asks whether a supplement, vitamin, protein powder, or product actually works."""
+    product_name = sanitize_input(product_name)
+    ingredients = sanitize_input(ingredients, max_length=5000)
+    product_url = sanitize_input(product_url, max_length=2000)
+
+    if not product_name and not ingredients and not product_url:
+        return json.dumps({"error": "Provide at least one of: product_name, ingredients, or product_url"})
+
+    body: dict[str, Any] = {}
+    if product_name:
+        body["product_name"] = product_name[:500]
+    if ingredients:
+        body["label_text"] = ingredients[:20000]
+    if product_url:
+        body["product_url"] = product_url[:2000]
+
+    body["async"] = True
+
+    try:
+        data = await _api_post("/api/v1/papers/product-claims", body)
+
+        # Poll for results if async job
+        job_id = data.get("job_id")
+        if job_id:
+            for _ in range(12):
+                await asyncio.sleep(5)
+                poll = await _api_get("/api/v1/papers/product-claims", {"job_id": job_id})
+                status = poll.get("status", "")
+                if status == "complete":
+                    data = poll
+                    break
+                elif status == "error":
+                    return json.dumps({"error": poll.get("error", "Product evaluation failed")})
+            else:
+                return json.dumps({
+                    "error": "Evaluation timed out. Try a simpler product name.",
+                    "job_id": job_id,
+                    "note": "Check results at https://www.nobleblocks.com/product-claims",
+                })
+
+        # Format claims
+        claims = data.get("claims", [])
+        formatted = []
+        for c in claims[:20]:
+            claim = {
+                "ingredient": c.get("ingredient", ""),
+                "effect": c.get("effect", ""),
+                "score": c.get("score", 0),
+                "confidence": c.get("confidence", ""),
+                "direction": c.get("direction", ""),
+                "evidence_count": c.get("evidence_count", 0),
+                "supporting": c.get("supporting", 0),
+                "contradicting": c.get("contradicting", 0),
+            }
+            if c.get("dose_warning"):
+                claim["dose_warning"] = c["dose_warning"]
+            top = c.get("top_studies", [])[:3]
+            if top:
+                claim["top_studies"] = [
+                    {"title": s.get("title", ""), "year": s.get("year"),
+                     "study_type": s.get("study_type", ""), "citations": s.get("citations", 0),
+                     "doi": s.get("doi", "")}
+                    for s in top
+                ]
+            formatted.append(claim)
+
+        result = {
+            "product": data.get("product", product_name),
+            "overall_score": data.get("overall_score"),
+            "overall_confidence": data.get("overall_confidence", ""),
+            "total_evidence": data.get("total_evidence", 0),
+            "claims": formatted,
+            "explore_url": f"https://www.nobleblocks.com/product-claims?q={product_name or ''}",
+            "attribution": "NobleBlocks Product-Claim Intelligence Engine (nobleblocks.com)",
+        }
+        warnings = data.get("warnings", [])
+        if warnings:
+            result["warnings"] = warnings[:10]
+
+        return json.dumps(result, indent=2, default=str)
+
+    except Exception as e:
+        logger.warning(f"[evaluate_product_claims] Failed: {e}")
+        return json.dumps({
+            "error": f"Product evaluation failed: {str(e)[:200]}",
+            "note": "Try at https://www.nobleblocks.com/product-claims",
+        })
 
 
 @mcp.tool(
@@ -1074,22 +1272,32 @@ async def create_literature_review(
         }
         return json.dumps(result, indent=2, default=str)
     except Exception as e:
+        err_msg = str(e)
         # Fallback: if the notebook API fails, do a search and return papers for manual synthesis
         logger.warning(f"[create_literature_review] Notebook API failed: {e}, falling back to search")
-        search_data = await _api_get(
-            "/api/v1/papers/search",
-            {"query": topic, "limit": num_papers, "phase": "fast", "sort": "citations"},
+        try:
+            search_data = await _api_get(
+                "/api/v1/papers/search",
+                {"query": topic, "limit": num_papers, "phase": "fast", "sort": "citations"},
+            )
+            papers = search_data.get("papers") or search_data.get("results") or []
+        except Exception:
+            papers = []
+        note = (
+            "Literature review generation requires authentication. "
+            "Sign in via nobleblocks.com or set NOBLEBLOCKS_API_KEY. "
+            "Here are the top-cited papers on this topic for manual synthesis. "
+            "Create a full AI review at: https://www.nobleblocks.com/deep-review"
+        ) if "Invalid API key" in err_msg or "401" in err_msg or "Unauthorized" in err_msg else (
+            "AI-generated literature review temporarily unavailable. "
+            "Here are the top-cited papers on this topic for manual synthesis. "
+            "Create a full AI review at: https://www.nobleblocks.com/deep-review"
         )
-        papers = search_data.get("papers") or search_data.get("results") or []
         return json.dumps({
-            "note": (
-                "AI-generated literature review requires a NobleBlocks Pro account. "
-                "Here are the top-cited papers on this topic for manual synthesis. "
-                "Create a full AI review at: https://www.nobleblocks.com/deep-review"
-            ),
+            "note": note,
             "topic": topic,
             "papers": [_compact_paper(p) for p in papers[:num_papers]],
-            "total_found": search_data.get("total", len(papers)),
+            "total_found": len(papers),
             "attribution": "Powered by NobleBlocks (nobleblocks.com)",
         }, indent=2, default=str)
 

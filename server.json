@@ -1,12 +1,12 @@
 {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "com.nobleblocks/nobleblocks-mcp",
-    "description": "Search 340M+ academic papers \u2014 citation graphs, semantic similarity, and AI literature reviews.",
+    "description": "Search 340M+ papers, evaluate supplement claims, explore citation graphs & knowledge graph.",
     "repository": {
         "url": "https://github.com/nobleblocks/nobleblocks-mcp",
         "source": "github"
     },
-    "version": "2.0.34",
+    "version": "2.2.0",
     "remotes": [
         {
             "type": "streamable-http",
