@@ -152,12 +152,35 @@ def test_entity_resolution():
                 print("  PARTIAL: Entities match 2+ words but Doudna not in KG")
         else:
             print("  INFO: All garbage/irrelevant entities filtered out — MCP will fall back to paper search")
-            # Verify fallback produces good papers (MCP uses _has_query_relevance with threshold=1)
-            r2 = httpx.get(
-                f"{API}/api/v1/papers/search",
-                params={"query": query, "limit": 10, "sort": "relevance", "phase": "fast"},
-                timeout=15,
-            )
+            # Verify fallback produces good papers (MCP uses author-name extraction
+            # and phase=extended for person names, phase=fast for non-person queries)
+            import re as _re
+            # Simplified person name check: first two words capitalized, not technical terms
+            words = query.strip().split()
+            name_parts = []
+            for w in words:
+                clean = _re.sub(r'[^a-zA-Z]', '', w)
+                if not clean:
+                    continue
+                if clean[0].isupper() and clean.lower() not in {"crispr", "nobel", "prize", "gene", "therapy"}:
+                    name_parts.append(clean)
+                else:
+                    if name_parts:
+                        break
+            author_name = " ".join(name_parts) if 2 <= len(name_parts) <= 4 else None
+
+            if author_name:
+                r2 = httpx.get(
+                    f"{API}/api/v1/papers/search",
+                    params={"query": author_name, "limit": 10, "sort": "citations", "phase": "extended"},
+                    timeout=30,
+                )
+            else:
+                r2 = httpx.get(
+                    f"{API}/api/v1/papers/search",
+                    params={"query": query, "limit": 10, "sort": "relevance", "phase": "fast"},
+                    timeout=15,
+                )
             if r2.status_code == 200:
                 papers = r2.json().get("papers") or r2.json().get("results") or []
                 # MCP uses _has_query_relevance: any 1 word ≥3 chars matching
