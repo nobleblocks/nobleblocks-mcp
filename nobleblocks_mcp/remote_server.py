@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import html
 import json
 import time
 import asyncio
@@ -108,6 +109,23 @@ def sanitize_input(value: str, max_length: int = MAX_QUERY_LENGTH) -> str:
     if DANGEROUS_PATTERNS.search(value):
         raise ValueError("Input contains potentially malicious content")
     return value
+
+
+def _js_string_escape(value: str) -> str:
+    """Escape a string for safe embedding inside a single-quoted JS string literal.
+    Prevents breaking out of the quotes and prevents premature </script> closure."""
+    if not isinstance(value, str):
+        return ""
+    return (
+        value.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace('"', '\\"')
+        .replace("\n", "")
+        .replace("\r", "")
+        .replace("<", "\\x3c")
+        .replace(">", "\\x3e")
+        .replace("&", "\\x26")
+    )
 
 
 def _headers(api_key: str = "") -> dict[str, str]:
@@ -1207,10 +1225,14 @@ async def consent_page(request: Request) -> HTMLResponse:
     """Render the OAuth consent/login page."""
     auth_state = request.query_params.get("auth_state", "")
     client_name = request.query_params.get("client_name", "Claude")
+    # SECURITY: both values are attacker-controllable query params reflected into
+    # the page. Escape for their respective contexts to prevent reflected XSS.
+    #  - client_name is rendered in HTML text → HTML-escape.
+    #  - auth_state is embedded in a single-quoted JS string literal → JS-escape.
     return HTMLResponse(
         CONSENT_HTML.format(
-            client_name=client_name,
-            auth_state=auth_state,
+            client_name=html.escape(client_name, quote=True),
+            auth_state=_js_string_escape(auth_state),
             google_client_id=GOOGLE_CLIENT_ID,
         )
     )
