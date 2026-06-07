@@ -579,6 +579,12 @@ async def get_paper(paper_id: str) -> str:
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
+    # Validate identifier format up front. A malformed DOI (e.g. "invalid-doi-xyz")
+    # must NOT silently fall through to a fuzzy title search that returns an
+    # unrelated high-citation paper.
+    if paper_id.startswith("10.") and not re.match(r"^10\.\d{4,9}/\S+$", paper_id):
+        return json.dumps({"error": f"Invalid DOI format: {paper_id}"})
+
     # The frontend /api/v1/papers/lookup route auto-detects the identifier type
     # from a single `id` query param — it does NOT accept typed params like `doi`.
     # Passing typed params yields HTTP 400 "id parameter is required".
@@ -586,20 +592,28 @@ async def get_paper(paper_id: str) -> str:
         data = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
     except httpx.HTTPStatusError as e:
         if e.response.status_code in (400, 404):
-            # Fallback: if the lookup by external ID failed, try searching by
-            # title/query — the paper may exist but lack the specific external ID
-            try:
-                fallback = await _api_get(
-                    "/api/v1/papers/search",
-                    {"query": paper_id, "limit": 3, "phase": "fast"},
-                )
-                fb_papers = fallback.get("papers") or fallback.get("results") or []
-                if fb_papers:
-                    data = {"paper": fb_papers[0]}
-                else:
+            # Only fall back to a title/query search when the input looks like a
+            # free-text title (contains whitespace). A single-token identifier
+            # that failed lookup is a genuine not-found — a fuzzy text match would
+            # silently return an unrelated paper (the "invalid-doi-xyz" bug).
+            if " " in paper_id.strip():
+                try:
+                    fallback = await _api_get(
+                        "/api/v1/papers/search",
+                        {"query": paper_id, "limit": 3, "phase": "fast"},
+                    )
+                    fb_papers = fallback.get("papers") or fallback.get("results") or []
+                    if fb_papers:
+                        data = {"paper": fb_papers[0]}
+                    else:
+                        return json.dumps({"error": f"Paper not found: {paper_id}"})
+                except Exception:
                     return json.dumps({"error": f"Paper not found: {paper_id}"})
-            except Exception:
-                return json.dumps({"error": f"Paper not found: {paper_id}"})
+            else:
+                return json.dumps({
+                    "error": f"Paper not found: {paper_id}. "
+                             "Check the identifier (DOI, PMID, arXiv ID, OpenAlex ID, or NobleBlocks ID)."
+                })
         else:
             return json.dumps({"error": f"Paper lookup failed (HTTP {e.response.status_code})"})
     except Exception as e:
@@ -719,43 +733,41 @@ async def get_citation_graph(
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
-    # Resolve to internal integer ID (the citation-graph endpoint uses path param)
-    internal_id = None
-    try:
-        # If already an integer, use directly
-        internal_id = int(paper_id.lstrip("Ww"))
-    except (ValueError, AttributeError):
-        pass
-
-    if internal_id is None:
-        # Look up by external ID to get internal ID. The frontend route auto-detects
-        # the identifier type from a single `id` param (typed params return HTTP 400).
+    # The /api/v1/papers/citation-graph route resolves the identifier itself:
+    # DOI (10.x), OpenAlex (W...), an internal numeric id, or an S2 id. If we were
+    # handed free text / a title, resolve it to an internal id first via search.
+    query_id = paper_id
+    is_resolvable = (
+        paper_id.startswith("10.")
+        or bool(re.match(r"^W\d+$", paper_id, re.IGNORECASE))
+        or paper_id.isdigit()
+    )
+    if not is_resolvable:
+        internal_id = None
         try:
             lookup = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
             internal_id = (lookup.get("paper") or lookup).get("id")
         except Exception:
             pass
-
-    if not internal_id:
-        # Fallback: search by title/query to find the paper
-        try:
-            search_data = await _api_get(
-                "/api/v1/papers/search",
-                {"query": paper_id, "limit": 1, "phase": "fast"},
-            )
-            papers = search_data.get("papers") or search_data.get("results") or []
-            if papers:
-                internal_id = papers[0].get("id")
-        except Exception:
-            pass
-
-    if not internal_id:
-        return json.dumps({"error": f"Paper not found: {paper_id}. Try a DOI or search query."})
+        if not internal_id:
+            try:
+                search_data = await _api_get(
+                    "/api/v1/papers/search",
+                    {"query": paper_id, "limit": 1, "phase": "fast"},
+                )
+                papers = search_data.get("papers") or search_data.get("results") or []
+                if papers:
+                    internal_id = papers[0].get("id")
+            except Exception:
+                pass
+        if not internal_id:
+            return json.dumps({"error": f"Paper not found: {paper_id}. Try a DOI or search query."})
+        query_id = str(internal_id)
 
     try:
         data = await _api_get(
-            f"/api/v1/papers/{internal_id}/citation-graph",
-            {"max_nodes": min(limit, 50), "direction": direction},
+            "/api/v1/papers/citation-graph",
+            {"paperId": query_id, "limit": min(limit, 50)},
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
@@ -771,32 +783,21 @@ async def get_citation_graph(
         logger.warning("get_citation_graph error: %s", e)
         return json.dumps({"error": "Citation graph temporarily unavailable. Try get_paper instead."})
 
-    # Parse graph response — nodes are papers, edges are citation links
+    # The route returns `references` and `citations` already separated (each a list
+    # of paper nodes), plus the full nodes/edges graph and the resolved seed.
+    refs_nodes = data.get("references") or []
+    cits_nodes = data.get("citations") or []
     graph_nodes = data.get("nodes") or []
     graph_edges = data.get("edges") or []
-
-    refs = []
-    cites = []
-    seed_id = internal_id
-    for edge in graph_edges:
-        src = edge.get("source")
-        tgt = edge.get("target")
-        if src == seed_id:
-            # This paper cites target
-            node = next((n for n in graph_nodes if n.get("id") == tgt), None)
-            if node:
-                refs.append(_compact_paper(node))
-        elif tgt == seed_id:
-            # Source cites this paper
-            node = next((n for n in graph_nodes if n.get("id") == src), None)
-            if node:
-                cites.append(_compact_paper(node))
+    seed = data.get("seed") or {}
 
     result: dict[str, Any] = {"paper_id": paper_id}
+    if seed.get("title"):
+        result["paper_title"] = seed.get("title")
     if direction in ("references", "cited", "both"):
-        result["references"] = refs[:limit]
+        result["references"] = [_compact_paper(n) for n in refs_nodes[:limit]]
     if direction in ("citations", "citing", "both"):
-        result["citations"] = cites[:limit]
+        result["citations"] = [_compact_paper(n) for n in cits_nodes[:limit]]
     result["total_nodes"] = len(graph_nodes)
     result["total_edges"] = len(graph_edges)
     result["attribution"] = "Powered by NobleBlocks (nobleblocks.com)"
