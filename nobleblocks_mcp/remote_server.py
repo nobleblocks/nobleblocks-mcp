@@ -48,7 +48,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.31")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.42")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -159,13 +159,13 @@ async def _api_get(path: str, params: dict[str, Any], api_key: str = "") -> dict
     raise last_exc or RuntimeError("Request failed after retries")
 
 
-async def _api_post(path: str, body: dict[str, Any], api_key: str = "") -> dict:
+async def _api_post(path: str, body: dict[str, Any], api_key: str = "", timeout: float = 120.0) -> dict:
     url = f"{NB_API_BASE}{path}"
     # Retry on 502/503/504 (backend/notebook generation saturation) like _api_get
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            async with httpx.AsyncClient(timeout=60.0, headers=_headers(api_key)) as client:
+            async with httpx.AsyncClient(timeout=timeout, headers=_headers(api_key)) as client:
                 resp = await client.post(url, json=body)
                 if resp.status_code in (502, 503, 504) and attempt < 2:
                     await asyncio.sleep(1.0 * (attempt + 1))
@@ -1313,6 +1313,7 @@ async def create_literature_review(
                 "numPapers": num_papers,
                 "style": style,
             },
+            timeout=180.0,
         )
         result = {
             "title": data.get("title", topic),
