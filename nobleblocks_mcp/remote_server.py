@@ -48,7 +48,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.43")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.44")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -324,6 +324,45 @@ def _has_strong_query_relevance(p: dict, query: str) -> bool:
 def _norm_text(s: str) -> str:
     """Lowercase + strip non-alphanumeric for fuzzy title/keyword comparison."""
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _extract_person_name(query: str) -> str | None:
+    """Try to extract a person name from a query like 'Jennifer Doudna CRISPR Nobel Prize'.
+    Returns the likely person name portion, or None if no person name detected."""
+    # Common non-name words in research queries
+    NON_NAME_WORDS = {
+        "crispr", "cas9", "nobel", "prize", "gene", "therapy", "editing",
+        "cancer", "protein", "disease", "research", "study", "theory",
+        "quantum", "machine", "learning", "deep", "neural", "network",
+        "algorithm", "method", "analysis", "review", "system", "model",
+        "drug", "treatment", "clinical", "trial", "cell", "stem",
+        "biology", "chemistry", "physics", "mathematics", "engineering",
+        "artificial", "intelligence", "computer", "science", "data",
+        "mit", "harvard", "stanford", "oxford", "cambridge", "yale",
+        "nih", "who", "fda", "erc", "nsf", "darpa", "nasa",
+    }
+    words = query.strip().split()
+    if len(words) < 2:
+        return None
+
+    # Extract words that look like name parts (capitalized, not technical terms)
+    name_parts = []
+    for w in words:
+        clean = re.sub(r"[^a-zA-Z]", "", w)
+        if not clean:
+            continue
+        # A name part: starts with uppercase, not a known technical term
+        if clean[0].isupper() and clean.lower() not in NON_NAME_WORDS and len(clean) >= 2:
+            name_parts.append(clean)
+        else:
+            # Once we hit a non-name word after collecting name parts, stop
+            if name_parts:
+                break
+
+    # A person name should be 2-4 parts (first + last, or first + middle + last)
+    if 2 <= len(name_parts) <= 4:
+        return " ".join(name_parts)
+    return None
 
 
 def _filter_noise_sources(papers: list, query: str) -> list:
@@ -1032,15 +1071,29 @@ async def search_by_entity(
     # valid entities the KG did resolve).
     if not papers:
         try:
-            fb = await _api_get(
-                "/api/v1/papers/search",
-                {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"},
-            )
+            # If query looks like it contains a person name, try author-specific search
+            # (the backend's /papers/search has built-in author detection)
+            author_name = _extract_person_name(query)
+            if author_name:
+                fb = await _api_get(
+                    "/api/v1/papers/search",
+                    {"query": author_name, "limit": max_nodes, "sort": "citations", "phase": "fast"},
+                )
+            else:
+                fb = await _api_get(
+                    "/api/v1/papers/search",
+                    {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"},
+                )
             fb_papers = fb.get("papers") or fb.get("results") or []
             fb_papers = [p for p in fb_papers if _has_query_relevance(p, query)]
             if fb_papers:
                 papers = [_compact_paper(p) for p in fb_papers[:max_nodes]]
                 if not entities:
+                    note = (
+                        f"No knowledge-graph entity for \"{author_name}\". Showing their most-cited papers."
+                        if author_name else
+                        "No clean knowledge-graph entities for this query. Showing relevant papers instead."
+                    )
                     return json.dumps({
                         "query": query,
                         "entities_found": 0,
@@ -1048,7 +1101,7 @@ async def search_by_entity(
                         "entities": [],
                         "papers": papers,
                         "relationships": 0,
-                        "note": "No clean knowledge-graph entities for this query. Showing relevant papers instead.",
+                        "note": note,
                         "attribution": "NobleBlocks (nobleblocks.com)",
                     }, indent=2, default=str)
         except Exception:
