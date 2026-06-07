@@ -293,7 +293,10 @@ def _has_query_relevance(p: dict, query: str) -> bool:
     text = title + " " + abstract
 
     matches = sum(1 for w in q_words if w in text)
-    return matches >= 1
+    # For multi-word queries, require at least 2 word matches to avoid
+    # one generic word (e.g. "gene") letting unrelated papers through.
+    threshold = min(2, len(q_words)) if len(q_words) >= 3 else 1
+    return matches >= threshold
 
 
 def _norm_text(s: str) -> str:
@@ -894,6 +897,16 @@ async def search_by_entity(
             name = node.get("name", "")
             if _is_garbage_entity(name):
                 continue
+            # Drop entities that only prefix-match a single query token (e.g.
+            # "Jennifer-Christin Müller" for a "Jennifer Doudna CRISPR" query).
+            # Require at least 2 query words present in entity name/description
+            # when the query has 3+ words (multi-concept queries).
+            nq_words = [w for w in _norm_text(query).split() if len(w) >= 3]
+            if len(nq_words) >= 3:
+                entity_text = _norm_text(name + " " + (node.get("description") or ""))
+                word_hits = sum(1 for w in nq_words if w in entity_text)
+                if word_hits < 2:
+                    continue
             entities.append({
                 "name": name,
                 "entity_type": node.get("entityType"),
