@@ -218,6 +218,44 @@ def _is_garbage_entity(name: str) -> bool:
     return False
 
 
+def _detect_paper_id_params(paper_id: str) -> dict:
+    """Detect the type of paper identifier and return the correct query params
+    for the /api/v1/papers/lookup endpoint.
+
+    Supports: DOI, PMID, arXiv ID, OpenAlex ID (W-prefix), S2 ID, NobleID (NB-prefix),
+    and integer internal IDs.
+    """
+    pid = paper_id.strip()
+    # DOI — starts with 10. or contains doi.org
+    if pid.startswith("10.") or "doi.org/" in pid:
+        # Extract DOI from URL if needed
+        if "doi.org/" in pid:
+            pid = pid.split("doi.org/", 1)[1]
+        return {"doi": pid}
+    # PMID — numeric-only, 1-9 digits (PMIDs are < 100M)
+    if pid.isdigit() and len(pid) <= 9:
+        return {"pmid": pid}
+    # arXiv — e.g. 2103.01234 or arXiv:2103.01234
+    if pid.lower().startswith("arxiv:"):
+        return {"arxiv_id": pid[6:]}
+    if re.match(r"^\d{4}\.\d{4,6}(v\d+)?$", pid):
+        return {"arxiv_id": pid}
+    # OpenAlex — W followed by digits
+    if re.match(r"^[Ww]\d+$", pid):
+        return {"openalex_id": pid}
+    # S2 — 40-char hex
+    if re.match(r"^[0-9a-fA-F]{40}$", pid):
+        return {"s2_id": pid}
+    # NobleID — NB- prefix
+    if pid.upper().startswith("NB-"):
+        return {"noble_id": pid}
+    # Internal integer ID (large numbers, 10+ digits = OpenAlex-style internal)
+    if pid.isdigit():
+        return {"id": int(pid)}
+    # Fallback: try as DOI
+    return {"doi": pid}
+
+
 def _is_figshare_dataset(p: dict) -> bool:
     """Detect Figshare/generic datasets which often carry inflated citation counts."""
     if not isinstance(p, dict):
@@ -320,7 +358,7 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
         "year": p.get("year") or _extract_year(p.get("publicationDate") or p.get("publication_date")),
         "doi": p.get("doi") or p.get("DOI") or ((p.get("externalIds") or {}).get("DOI") if isinstance(p.get("externalIds"), dict) else None),
         "citations": citations,
-        "venue": p.get("venue") or p.get("source") or (p.get("journal") if isinstance(p.get("journal"), str) else (p.get("journal") or {}).get("name")),
+        "venue": p.get("venue") or p.get("source") or p.get("journal_name") or (p.get("journal") if isinstance(p.get("journal"), str) else (p.get("journal") or {}).get("name")),
         "abstract": abstract,
         "url": _build_url(p),
     }
@@ -510,12 +548,27 @@ async def get_paper(paper_id: str) -> str:
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
+    lookup_params = _detect_paper_id_params(paper_id)
     try:
-        data = await _api_get("/api/v1/papers/lookup", {"id": paper_id})
+        data = await _api_get("/api/v1/papers/lookup", lookup_params)
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            return json.dumps({"error": f"Paper not found: {paper_id}"})
-        return json.dumps({"error": f"Paper lookup failed (HTTP {e.response.status_code})"})
+            # Fallback: if the lookup by external ID failed, try searching by
+            # title/query — the paper may exist but lack the specific external ID
+            try:
+                fallback = await _api_get(
+                    "/api/v1/papers/search",
+                    {"query": paper_id, "limit": 3, "phase": "fast"},
+                )
+                fb_papers = fallback.get("papers") or fallback.get("results") or []
+                if fb_papers:
+                    data = {"paper": fb_papers[0]}
+                else:
+                    return json.dumps({"error": f"Paper not found: {paper_id}"})
+            except Exception:
+                return json.dumps({"error": f"Paper not found: {paper_id}"})
+        else:
+            return json.dumps({"error": f"Paper lookup failed (HTTP {e.response.status_code})"})
     except Exception as e:
         logger.warning("get_paper error for %s: %s", paper_id, e)
         return json.dumps({"error": "Paper lookup temporarily unavailable."})
@@ -631,10 +684,42 @@ async def get_citation_graph(
     if not paper_id:
         return json.dumps({"error": "paper_id is required"})
 
+    # Resolve to internal integer ID (the citation-graph endpoint uses path param)
+    internal_id = None
+    try:
+        # If already an integer, use directly
+        internal_id = int(paper_id.lstrip("Ww"))
+    except (ValueError, AttributeError):
+        pass
+
+    if internal_id is None:
+        # Look up by external ID to get internal ID
+        try:
+            lookup = await _api_get("/api/v1/papers/lookup", _detect_paper_id_params(paper_id))
+            internal_id = (lookup.get("paper") or lookup).get("id")
+        except Exception:
+            pass
+
+    if not internal_id:
+        # Fallback: search by title/query to find the paper
+        try:
+            search_data = await _api_get(
+                "/api/v1/papers/search",
+                {"query": paper_id, "limit": 1, "phase": "fast"},
+            )
+            papers = search_data.get("papers") or search_data.get("results") or []
+            if papers:
+                internal_id = papers[0].get("id")
+        except Exception:
+            pass
+
+    if not internal_id:
+        return json.dumps({"error": f"Paper not found: {paper_id}. Try a DOI or search query."})
+
     try:
         data = await _api_get(
-            "/api/v1/papers/citation-graph",
-            {"paperId": paper_id, "limit": min(limit, 50)},
+            f"/api/v1/papers/{internal_id}/citation-graph",
+            {"max_nodes": min(limit, 50), "direction": direction},
         )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
@@ -643,16 +728,41 @@ async def get_citation_graph(
                 "paper_id": paper_id,
                 "tip": "Use search_papers or get_paper tools which work without login.",
             })
+        if e.response.status_code == 404:
+            return json.dumps({"error": f"Paper not found in citation graph: {paper_id}"})
         return json.dumps({"error": f"Citation graph request failed (HTTP {e.response.status_code})"})
     except Exception as e:
         logger.warning("get_citation_graph error: %s", e)
         return json.dumps({"error": "Citation graph temporarily unavailable. Try get_paper instead."})
 
+    # Parse graph response — nodes are papers, edges are citation links
+    graph_nodes = data.get("nodes") or []
+    graph_edges = data.get("edges") or []
+
+    refs = []
+    cites = []
+    seed_id = internal_id
+    for edge in graph_edges:
+        src = edge.get("source")
+        tgt = edge.get("target")
+        if src == seed_id:
+            # This paper cites target
+            node = next((n for n in graph_nodes if n.get("id") == tgt), None)
+            if node:
+                refs.append(_compact_paper(node))
+        elif tgt == seed_id:
+            # Source cites this paper
+            node = next((n for n in graph_nodes if n.get("id") == src), None)
+            if node:
+                cites.append(_compact_paper(node))
+
     result: dict[str, Any] = {"paper_id": paper_id}
-    if direction in ("references", "both"):
-        result["references"] = [_compact_paper(p) for p in (data.get("references") or [])[:limit]]
-    if direction in ("citations", "both"):
-        result["citations"] = [_compact_paper(p) for p in (data.get("citations") or [])[:limit]]
+    if direction in ("references", "cited", "both"):
+        result["references"] = refs[:limit]
+    if direction in ("citations", "citing", "both"):
+        result["citations"] = cites[:limit]
+    result["total_nodes"] = len(graph_nodes)
+    result["total_edges"] = len(graph_edges)
     result["attribution"] = "Powered by NobleBlocks (nobleblocks.com)"
     return json.dumps(result, indent=2, default=str)
 
