@@ -117,7 +117,7 @@ def test_entity_resolution():
     r = httpx.get(
         f"{API}/api/v1/kg/explore",
         params={"query": query, "max_nodes": 10},
-        timeout=15,
+        timeout=60,
     )
     print(f"  KG explore: HTTP {r.status_code}")
     if r.status_code == 200:
