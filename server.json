@@ -6,7 +6,7 @@
         "url": "https://github.com/nobleblocks/nobleblocks-mcp",
         "source": "github"
     },
-    "version": "2.0.38",
+    "version": "2.0.39",
     "remotes": [
         {
             "type": "streamable-http",
