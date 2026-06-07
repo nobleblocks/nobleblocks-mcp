@@ -606,11 +606,16 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
 
     limit = min(int(args.get("limit", 20)), 50)
     open_access = args.get("open_access")
+    sort = args.get("sort", "relevance")
+    # For relevance sort, over-fetch a wider candidate pool (the backend's ranked
+    # set grows with `limit`) so exact-title / specific-term matches just outside a
+    # small requested limit can still be surfaced by the re-rank below.
+    candidate_limit = 50 if sort == "relevance" else limit
     data = await _get(
         "/api/v1/papers/search",
         {
             "query": query,
-            "limit": limit,
+            "limit": candidate_limit,
             # PROTECTED: phase=fast MUST stay. Removing this triggers AI rewrites
             # + external API calls (S2/OpenAlex/CrossRef) for every MCP search,
             # burning LLM budget and causing latency spikes site-wide.
@@ -635,7 +640,7 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
             "/api/v1/papers/search",
             {
                 "query": query,
-                "limit": limit,
+                "limit": candidate_limit,
                 "min_year": args.get("min_year"),
                 "max_year": args.get("max_year"),
                 "min_citations": args.get("min_citations"),

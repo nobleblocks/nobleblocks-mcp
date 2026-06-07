@@ -373,11 +373,16 @@ async def search_papers(
         return json.dumps({"error": f"Invalid year range: min_year ({min_year}) cannot be greater than max_year ({max_year})"})
 
     effective_limit = min(limit, 50)
+    # For relevance sort, over-fetch a wider candidate pool (the backend's ranked
+    # set grows with `limit`) so exact-title / specific-term matches that sit just
+    # outside a small requested limit can still be surfaced by the re-rank below.
+    # Fixes "Attention Is All You Need" (and drug-name) queries being buried.
+    candidate_limit = 50 if sort == "relevance" else effective_limit
     data = await _api_get(
         "/api/v1/papers/search",
         {
             "query": query,
-            "limit": effective_limit,
+            "limit": candidate_limit,
             # PROTECTED: phase=fast MUST stay. Removing this triggers AI rewrites
             # + external API calls (S2/OpenAlex/CrossRef) for every MCP search,
             # burning LLM budget and causing latency spikes site-wide.
@@ -416,7 +421,7 @@ async def search_papers(
             "/api/v1/papers/search",
             {
                 "query": query,
-                "limit": effective_limit,
+                "limit": candidate_limit,
                 "min_year": min_year,
                 "max_year": max_year,
                 "min_citations": min_citations,
