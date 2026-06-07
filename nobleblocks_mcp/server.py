@@ -55,7 +55,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-LOCAL_VERSION = "2.0.28"
+LOCAL_VERSION = "2.0.31"
 USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
@@ -649,15 +649,32 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
         )
         papers = data.get("papers") or data.get("results") or []
 
-    # Filter out Figshare datasets from citation-sorted results (inflated citation counts)
-    sort = args.get("sort", "relevance")
-    if sort == "citations" and not args.get("doc_type"):
-        papers = [p for p in papers if not _is_figshare_dataset(p)]
+    # Filter out Figshare datasets (inflated citation counts) unless the user
+    # explicitly asked for datasets.
+    if args.get("doc_type") != "dataset":
+        filtered = [p for p in papers if not _is_figshare_dataset(p)]
+        if filtered:
+            papers = filtered
+
+    # Light relevance re-rank: surface exact-title / full-keyword matches.
+    if args.get("sort", "relevance") == "relevance":
+        papers = _rerank_by_title_match(papers, query)
 
     results = [_compact_paper(p) for p in papers[:limit]]
-    # Correct total: must be consistent with results (fixes Arabic query mismatch)
-    raw_total = data.get("total", len(papers))
-    total = max(raw_total, len(results)) if results else 0
+    # Correct total. Backend `total` reflects the UNFILTERED query and can be a
+    # phantom cap that ignores min_citations/min_year/source filters. When
+    # restrictive filters are active, report the actual returned count.
+    has_restrictive_filters = any(
+        args.get(k) is not None
+        for k in ("min_citations", "min_year", "max_year", "source", "doc_type", "author_name", "language")
+    )
+    if not results:
+        total = 0
+    elif has_restrictive_filters:
+        total = len(results)
+    else:
+        raw_total = data.get("total", len(papers))
+        total = max(raw_total, len(results))
 
     return {
         "query": query,
@@ -1043,6 +1060,41 @@ def _first_non_none(*values):
         if v is not None:
             return v
     return None
+
+
+def _norm_text(s: str) -> str:
+    """Lowercase + strip non-alphanumeric for fuzzy title/keyword comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _rerank_by_title_match(papers: list, query: str) -> list:
+    """Stable re-rank so exact/near-exact title matches and full-keyword-coverage
+    papers float to the top (fixes title + specific-term queries being buried)."""
+    if not papers or not isinstance(papers, list):
+        return papers
+    nq = _norm_text(query)
+    if not nq:
+        return papers
+    q_words = [w for w in nq.split() if len(w) >= 2]
+    if not q_words:
+        return papers
+
+    def score(p: dict) -> tuple:
+        if not isinstance(p, dict):
+            return (0, 0, 0)
+        nt = _norm_text(p.get("title") or p.get("name") or "")
+        exact = 1 if nt == nq else 0
+        phrase = 1 if nq in nt else 0
+        present = sum(1 for w in q_words if w in nt)
+        coverage = present / len(q_words)
+        return (exact, phrase, coverage)
+
+    scored = [(score(p), i, p) for i, p in enumerate(papers)]
+    best = max(s[0] for s in scored)
+    if best[0] == 0 and best[1] == 0 and best[2] < 0.999:
+        return papers
+    scored.sort(key=lambda t: (-t[0][0], -t[0][1], -t[0][2], t[1]))
+    return [t[2] for t in scored]
 
 
 # Regex patterns for garbage entities extracted from PDF footers

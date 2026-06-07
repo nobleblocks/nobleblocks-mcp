@@ -47,7 +47,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.26")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.31")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -143,12 +143,119 @@ async def _api_get(path: str, params: dict[str, Any], api_key: str = "") -> dict
 
 async def _api_post(path: str, body: dict[str, Any], api_key: str = "") -> dict:
     url = f"{NB_API_BASE}{path}"
-    async with httpx.AsyncClient(timeout=60.0, headers=_headers(api_key)) as client:
-        resp = await client.post(url, json=body)
-        if resp.status_code in (401, 403):
-            raise RuntimeError(f"Authentication required (HTTP {resp.status_code})")
-        resp.raise_for_status()
-        return resp.json()
+    # Retry on 502/503/504 (backend/notebook generation saturation) like _api_get
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=60.0, headers=_headers(api_key)) as client:
+                resp = await client.post(url, json=body)
+                if resp.status_code in (502, 503, 504) and attempt < 2:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                if resp.status_code in (401, 403):
+                    raise RuntimeError(f"Authentication required (HTTP {resp.status_code})")
+                resp.raise_for_status()
+                return resp.json()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_exc = e
+            if attempt < 2:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise last_exc or RuntimeError("Request failed after retries")
+
+
+# ─── Helpers: value selection + quality filters ───────────────────────────────
+def _first_non_none(*values):
+    """Return the first value that is not None (0 and '' are valid, unlike `or`)."""
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+# Regex patterns for garbage entities extracted from PDF footers / addresses
+_GARBAGE_ENTITY_RE = re.compile(
+    r"(\d{5})|"                       # ZIP codes (5-digit)
+    r"(@[a-zA-Z0-9.-]+\.[a-z]{2,})|"  # Email addresses
+    r"(^\d+\s)|"                       # Leading numbers
+    r"(\.edu\b|\.org\b|\.com\b)|"     # Bare domain fragments
+    r"(\band\.$)"                      # Trailing "and."
+)
+
+
+def _is_garbage_entity(name: str) -> bool:
+    """True if the entity name looks like a PDF footer/address, not a real entity."""
+    if not name or len(name) < 3:
+        return True
+    if len(name) > 200:
+        return True
+    if "@" in name:
+        return True
+    digits = sum(c.isdigit() for c in name)
+    if digits > len(name) * 0.5:
+        return True
+    if _GARBAGE_ENTITY_RE.search(name):
+        return True
+    return False
+
+
+def _is_figshare_dataset(p: dict) -> bool:
+    """Detect Figshare/generic datasets which often carry inflated citation counts."""
+    if not isinstance(p, dict):
+        return False
+    doi = (p.get("doi") or p.get("DOI") or "").lower()
+    if "figshare" in doi:
+        return True
+    venue = (p.get("venue") or p.get("source") or "").lower()
+    if "figshare" in venue:
+        return True
+    doc_type = (p.get("type") or p.get("doc_type") or p.get("documentType") or "").lower()
+    if doc_type == "dataset":
+        return True
+    return False
+
+
+def _norm_text(s: str) -> str:
+    """Lowercase + strip non-alphanumeric for fuzzy title/keyword comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+
+def _rerank_by_title_match(papers: list, query: str) -> list:
+    """Stable re-rank so exact/near-exact title matches and full-keyword-coverage
+    papers float to the top. Fixes title queries like 'Attention Is All You Need'
+    and specific-term queries (drug names) being buried under fuzzy matches."""
+    if not papers or not isinstance(papers, list):
+        return papers
+    nq = _norm_text(query)
+    if not nq:
+        return papers
+    q_words = [w for w in nq.split() if len(w) >= 2]
+    if not q_words:
+        return papers
+
+    def score(p: dict) -> tuple:
+        if not isinstance(p, dict):
+            return (0, 0, 0)
+        nt = _norm_text(p.get("title") or p.get("name") or "")
+        # 1) exact title match (highest)
+        exact = 1 if nt == nq else 0
+        # 2) title contains the full query phrase
+        phrase = 1 if nq in nt else 0
+        # 3) fraction of query keywords present in title
+        present = sum(1 for w in q_words if w in nt)
+        coverage = present / len(q_words)
+        return (exact, phrase, coverage)
+
+    # Only re-rank when at least one paper clearly beats the rest, to avoid
+    # disturbing already-good relevance ordering for broad topical queries.
+    scored = [(score(p), i, p) for i, p in enumerate(papers)]
+    best = max(s[0] for s in scored)
+    if best[0] == 0 and best[1] == 0 and best[2] < 0.999:
+        # No exact title, no phrase, no full-keyword-coverage hit → leave as-is
+        return papers
+    scored.sort(key=lambda t: (-t[0][0], -t[0][1], -t[0][2], t[1]))
+    return [t[2] for t in scored]
 
 
 # ─── Paper formatting ─────────────────────────────────────────────────────────
@@ -159,15 +266,18 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
     if len(abstract) > 600:
         abstract = abstract[:600] + "..."
 
-    # Robust citation count extraction — check multiple field names
-    citations = (
-        p.get("citationCount")
-        or p.get("citation_count")
-        or p.get("cited_by_count")
-        or p.get("citations_count")
-        or p.get("numCitations")
-        or 0
+    # Robust citation count extraction — check multiple field names.
+    # NOTE: Can't use `or` chaining because 0 is falsy in Python (would skip a
+    # legitimate 0 and fall through to the next field / wrong value).
+    citations = _first_non_none(
+        p.get("citationCount"),
+        p.get("citation_count"),
+        p.get("cited_by_count"),
+        p.get("citations_count"),
+        p.get("numCitations"),
     )
+    if citations is None:
+        citations = 0
     # If citations is a list (citation objects), use length
     if isinstance(citations, list):
         citations = len(citations)
@@ -320,10 +430,33 @@ async def search_papers(
         )
         papers = data.get("papers") or data.get("results") or []
 
+    # Filter out Figshare/dataset records (inflated citation counts, low relevance)
+    # unless the user explicitly asked for datasets.
+    if doc_type != "dataset":
+        filtered = [p for p in papers if not _is_figshare_dataset(p)]
+        # Only apply if it doesn't wipe out the whole result set
+        if filtered:
+            papers = filtered
+
+    # Light relevance re-rank: surface exact-title / full-keyword matches so
+    # specific queries (paper titles, drug names) aren't buried by fuzzy hits.
+    if sort == "relevance":
+        papers = _rerank_by_title_match(papers, query)
+
     compact_results = [_compact_paper(p) for p in papers[:effective_limit]]
-    # Correct total: if results are empty, total must be 0 (avoid phantom totals from backend)
-    raw_total = data.get("total", len(papers))
-    total = raw_total if compact_results else 0
+    # Correct total. The backend `total` reflects the UNFILTERED query and can be a
+    # phantom cap (e.g. 500) that ignores min_citations/min_year/source filters.
+    # When restrictive filters are active, report the actual returned count instead.
+    has_restrictive_filters = any(
+        v is not None for v in (min_citations, min_year, max_year, source, doc_type, author_name, language)
+    )
+    if not compact_results:
+        total = 0
+    elif has_restrictive_filters:
+        total = len(compact_results)
+    else:
+        raw_total = data.get("total", len(papers))
+        total = max(raw_total, len(compact_results))
 
     result: dict[str, Any] = {
         "query": query,
@@ -369,6 +502,45 @@ async def get_paper(paper_id: str) -> str:
         **_compact_paper(paper, include_full=True),
         "attribution": "Powered by NobleBlocks (nobleblocks.com)",
     }
+
+    # Enrich: lookup often returns citations=0 / missing venue. Search by title
+    # to recover the real citation count and venue from the indexed corpus.
+    if result.get("title") and (not result.get("citations") or not result.get("venue")):
+        try:
+            search_data = await _api_get(
+                "/api/v1/papers/search",
+                {"query": result["title"], "limit": 3, "phase": "fast"},
+            )
+            cand = search_data.get("papers") or search_data.get("results") or []
+            nt = _norm_text(result["title"])
+            match = None
+            for sp in cand:
+                if _norm_text(sp.get("title") or sp.get("name") or "") == nt:
+                    match = sp
+                    break
+            if match is None and cand:
+                match = cand[0]  # best-effort: top hit
+            if match:
+                if not result.get("citations"):
+                    enriched = _first_non_none(
+                        match.get("citationCount"), match.get("citation_count"),
+                        match.get("cited_by_count"), match.get("numCitations"),
+                    )
+                    if enriched:
+                        result["citations"] = enriched
+                if not result.get("venue"):
+                    result["venue"] = (
+                        match.get("venue") or match.get("source")
+                        or (match.get("journal") if isinstance(match.get("journal"), str)
+                            else (match.get("journal") or {}).get("name"))
+                    )
+                if not result.get("references_count"):
+                    result["references_count"] = (
+                        match.get("referenceCount") or match.get("reference_count") or 0
+                    )
+        except Exception:
+            pass  # enrichment is best-effort
+
     return json.dumps(result, indent=2, default=str)
 
 
@@ -407,6 +579,7 @@ async def find_similar(query: str, limit: int = 10) -> str:
             {"query": query, "limit": effective_limit, "sort": "relevance"},
         )
         papers = data.get("papers") or data.get("results") or []
+        papers = _rerank_by_title_match(papers, query)
         result = {
             "query": query,
             "results": [_compact_paper(p) for p in papers],
@@ -547,13 +720,52 @@ async def search_by_entity(
         if not isinstance(node, dict):
             continue
         if node.get("type") == "entity":
+            # Drop garbage entities: email footers, ZIP codes, partial addresses
+            name = node.get("name", "")
+            if _is_garbage_entity(name):
+                continue
             entities.append({
-                "name": node.get("name"),
+                "name": name,
                 "entity_type": node.get("entityType"),
                 "description": node.get("description"),
             })
         elif node.get("type") == "paper":
-            papers.append(_compact_paper(node))
+            paper = _compact_paper(node)
+            # Enrich from raw node fields if _compact_paper missed them
+            if not paper.get("year") and node.get("year"):
+                paper["year"] = node["year"]
+            if not paper.get("doi") and node.get("doi"):
+                paper["doi"] = node["doi"]
+            if not paper.get("authors") and node.get("authors"):
+                raw = node["authors"]
+                paper["authors"] = (
+                    [a.get("name") if isinstance(a, dict) else str(a) for a in raw][:8]
+                    if isinstance(raw, list) else []
+                )
+            papers.append(paper)
+
+    # If the KG returned only garbage/empty entities AND no papers, fall back to
+    # paper search so the user still gets useful, relevant results.
+    if not entities and not papers:
+        try:
+            fb = await _api_get(
+                "/api/v1/papers/search",
+                {"query": query, "limit": max_nodes, "sort": "relevance", "phase": "fast"},
+            )
+            fb_papers = fb.get("papers") or fb.get("results") or []
+            if fb_papers:
+                return json.dumps({
+                    "query": query,
+                    "entities_found": 0,
+                    "papers_found": len(fb_papers),
+                    "entities": [],
+                    "papers": [_compact_paper(p) for p in fb_papers[:max_nodes]],
+                    "relationships": 0,
+                    "note": "No clean knowledge-graph entities for this query. Showing relevant papers instead.",
+                    "attribution": "NobleBlocks (nobleblocks.com)",
+                }, indent=2, default=str)
+        except Exception:
+            pass
 
     result = {
         "query": query,
