@@ -1077,7 +1077,7 @@ async def search_by_entity(
             if author_name:
                 fb = await _api_get(
                     "/api/v1/papers/search",
-                    {"query": author_name, "limit": max_nodes, "sort": "citations", "phase": "fast"},
+                    {"query": author_name, "limit": max_nodes, "sort": "citations", "phase": "extended"},
                 )
             else:
                 fb = await _api_get(
