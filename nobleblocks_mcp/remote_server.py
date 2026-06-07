@@ -293,9 +293,31 @@ def _has_query_relevance(p: dict, query: str) -> bool:
     text = title + " " + abstract
 
     matches = sum(1 for w in q_words if w in text)
-    # For multi-word queries, require at least 2 word matches to avoid
-    # one generic word (e.g. "gene") letting unrelated papers through.
-    threshold = min(2, len(q_words)) if len(q_words) >= 3 else 1
+    return matches >= 1
+
+
+def _has_strong_query_relevance(p: dict, query: str) -> bool:
+    """Stricter relevance check requiring the most distinctive query words.
+    Used by grants fallback to avoid generic "gene therapy" papers drowning out
+    specific topics like "CRISPR gene therapy" where CRISPR is the distinctive term."""
+    if not isinstance(p, dict) or not query:
+        return True
+    nq = _norm_text(query)
+    q_words = [w for w in nq.split() if len(w) >= 3]
+    if not q_words or len(q_words) < 2:
+        return _has_query_relevance(p, query)
+
+    title = _norm_text(p.get("title") or p.get("name") or "")
+    abstract = _norm_text(p.get("abstract") or "")
+    text = title + " " + abstract
+
+    matches = sum(1 for w in q_words if w in text)
+    # Short queries (≤4 words): require ALL words to match.
+    # Longer queries (5+): require at least 2/3 (rounded up).
+    if len(q_words) <= 4:
+        threshold = len(q_words)
+    else:
+        threshold = (len(q_words) * 2 + 2) // 3  # ceil(2n/3)
     return matches >= threshold
 
 
@@ -1043,18 +1065,19 @@ async def search_grants(
         data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit, "entity_type": "funder"})
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 422:
-            # KG explore doesn't support this query format; fall back to paper search with funder context
+            # KG explore doesn't support this query format; fall back to paper search
             try:
                 search_data = await _api_get(
                     "/api/v1/papers/search",
-                    {"query": f"{query} funding grant", "limit": limit, "phase": "fast"},
+                    {"query": query, "limit": limit * 2, "phase": "fast", "sort": "relevance"},
                 )
                 papers = search_data.get("papers") or search_data.get("results") or []
+                papers = [p for p in papers if _has_strong_query_relevance(p, query)]
                 return json.dumps({
                     "query": query,
-                    "note": "Grant-specific search returned papers mentioning funding. For specific funder data, try searching by funder name (e.g. 'NIH', 'ERC', 'Wellcome Trust').",
+                    "note": "Grant-specific search returned papers related to your funding query. For specific funder data, try searching by funder name (e.g. 'NIH', 'ERC', 'Wellcome Trust').",
                     "papers": [_compact_paper(p) for p in papers[:limit]],
-                    "total_found": search_data.get("total", len(papers)),
+                    "total_found": len(papers),
                     "attribution": "NobleBlocks (nobleblocks.com)",
                 }, indent=2, default=str)
             except Exception:
@@ -1117,14 +1140,15 @@ async def search_grants(
         # the user gets papers actually related to their query.
         relevant_papers = []
         try:
-            grant_query = f"{query} funding grant"
+            # Search with the raw query (NOT appending "funding grant" which drowns
+            # specific topics like CRISPR in generic gene-therapy funding papers).
             fallback_data = await _api_get(
                 "/api/v1/papers/search",
-                {"query": grant_query, "limit": limit, "phase": "fast", "sort": "relevance"},
+                {"query": query, "limit": limit * 2, "phase": "fast", "sort": "relevance"},
             )
             fallback_papers = fallback_data.get("papers") or fallback_data.get("results") or []
-            # Keep only papers with genuine query relevance (drop generic noise)
-            fallback_papers = [p for p in fallback_papers if _has_query_relevance(p, query)]
+            # Use strict relevance filter: require majority of query words match
+            fallback_papers = [p for p in fallback_papers if _has_strong_query_relevance(p, query)]
             relevant_papers = [_compact_paper(p) for p in fallback_papers[:limit]]
         except Exception:
             pass
