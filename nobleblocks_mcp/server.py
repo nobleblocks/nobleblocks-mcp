@@ -56,7 +56,8 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-LOCAL_VERSION = "2.0.31"
+NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu")
+LOCAL_VERSION = "2.0.32"
 USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
 
@@ -181,6 +182,8 @@ def audit_log(tool: str, args: dict[str, Any], success: bool, duration_ms: float
 # ─── HTTP client ───────────────────────────────────────────────────────────────
 def _headers() -> dict[str, str]:
     h = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if NB_INTERNAL_TOKEN:
+        h["x-internal-token"] = NB_INTERNAL_TOKEN
     if API_KEY:
         h["Authorization"] = f"Bearer {API_KEY}"
     else:
@@ -222,10 +225,10 @@ async def _get(path: str, params: dict[str, Any]) -> dict:
     raise last_exc or RuntimeError("Request failed after retries")
 
 
-async def _post(path: str, body: dict[str, Any]) -> dict:
+async def _post(path: str, body: dict[str, Any], timeout: float = 180.0) -> dict:
     """POST request with error wrapping."""
     url = f"{API_BASE}{path}"
-    async with httpx.AsyncClient(timeout=60.0, headers=_headers()) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=_headers()) as client:
         resp = await client.post(url, json=body)
         if resp.status_code == 401:
             raise RuntimeError("Invalid API key. Get one at https://www.nobleblocks.com/settings/api-keys")
