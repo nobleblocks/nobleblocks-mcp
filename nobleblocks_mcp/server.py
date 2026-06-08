@@ -877,12 +877,31 @@ async def _tool_create_literature_review(args: dict[str, Any]) -> dict:
     # Accept both "num_papers" and "max_papers" (Claude sometimes sends "max_papers")
     num_papers = int(args.get("num_papers") or args.get("max_papers", 15))
 
+    # Search for papers first to provide citation context
+    papers_for_review: list[dict] = []
+    try:
+        search_data = await _get(
+            "/api/v1/papers/search",
+            {"query": topic, "limit": min(num_papers, 50), "phase": "fast"},
+        )
+        for p in (search_data.get("results") or [])[:num_papers]:
+            papers_for_review.append({
+                "title": p.get("title", ""),
+                "authors": p.get("authors") or [],
+                "year": p.get("year") or p.get("publication_year"),
+                "doi": p.get("doi") or p.get("DOI", ""),
+                "journal": p.get("journal") or p.get("source", ""),
+                "abstract": (p.get("abstract") or p.get("snippet") or "")[:500],
+            })
+    except Exception:
+        pass  # Proceed without papers if search fails
+
     try:
         data = await _post(
             "/api/v1/notebooks/from-search",
             {
                 "searchQuery": topic,
-                "papers": [],  # let the API search and pick
+                "papers": papers_for_review,
                 "documentType": "literature_review",
                 "maxWords": 2000,
                 "tone": "academic",
@@ -900,9 +919,17 @@ async def _tool_create_literature_review(args: dict[str, Any]) -> dict:
             ) from e
         raise
 
+    # The endpoint returns: title (plain text of full content), content (TipTap doc JSON),
+    # wordCount, papers[]. Extract readable text from the response.
+    raw_title = data.get("title", "") or ""
+    # title contains the full plain-text version; use it as content_preview
+    content_text = raw_title if len(raw_title) > 50 else ""
+    # Extract a short display title from the first line
+    display_title = raw_title.split("\n")[0].split("##")[0].strip() or topic
+
     return {
-        "title": data.get("title", topic),
-        "content_preview": (data.get("content", {}).get("text") or "")[:2000],
+        "title": display_title,
+        "content_preview": content_text[:2000],
         "word_count": data.get("wordCount", 0),
         "credits_used": data.get("creditsUsed", 1),
         "full_url": f"https://www.nobleblocks.com/notebooks/{data.get('id', '')}",
