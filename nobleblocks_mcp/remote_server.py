@@ -48,7 +48,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.46")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.49")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -516,7 +516,9 @@ def _compact_paper(p: dict, include_full: bool = False) -> dict:
         "url": _build_url(p),
     }
     if include_full:
-        out["references_count"] = p.get("referenceCount") or p.get("reference_count") or 0
+        out["references_count"] = _first_non_none(
+            p.get("referenceCount"), p.get("reference_count"), p.get("ref_count")
+        ) or 0
         out["open_access"] = p.get("isOpenAccess", False)
         out["pdf_url"] = (p.get("openAccessPdf") or {}).get("url")
     return out
@@ -667,15 +669,20 @@ async def search_papers(
     compact_results = [_compact_paper(p) for p in papers[:effective_limit]]
     # Correct total. The backend `total` reflects the UNFILTERED query and can be a
     # phantom cap (e.g. 500) that ignores min_citations/min_year/source filters.
-    # When restrictive filters are active, report the actual returned count instead.
+    # For relevance sort: phase=fast produces non-deterministic totals (5 one run,
+    # 493 another) depending on cache state. Report actual returned count to avoid
+    # confusing LLM clients with unstable numbers.
     has_restrictive_filters = any(
         v is not None for v in (min_citations, min_year, max_year, source, doc_type, author_name, language)
     )
     if not compact_results:
         total = 0
     elif has_restrictive_filters:
+        # Filters narrow results below backend estimate — use actual count
         total = len(compact_results)
     else:
+        # For both relevance and citation sort without filters, use backend total
+        # (EXPLAIN-estimated count of matching rows) when available.
         raw_total = data.get("total", len(papers))
         total = max(raw_total, len(compact_results))
 
@@ -771,8 +778,8 @@ async def get_paper(paper_id: str) -> str:
                     match = sp
                     break
             if match is None and cand:
-                # Check first result matches reasonably
-                if _norm_text(cand[0].get("title") or "")[:40] == nt[:40]:
+                # Check first result matches reasonably (use [:30] for robustness)
+                if _norm_text(cand[0].get("title") or "")[:30] == nt[:30]:
                     match = cand[0]
             if match:
                 enriched = _first_non_none(
@@ -789,9 +796,9 @@ async def get_paper(paper_id: str) -> str:
                             else (match.get("journal") or {}).get("name"))
                     )
                 if not result.get("references_count"):
-                    result["references_count"] = (
-                        match.get("referenceCount") or match.get("reference_count") or 0
-                    )
+                    result["references_count"] = _first_non_none(
+                        match.get("referenceCount"), match.get("reference_count"), match.get("ref_count")
+                    ) or 0
         except Exception:
             pass  # enrichment is best-effort
 

@@ -726,8 +726,8 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
 
     results = [_compact_paper(p) for p in papers[:limit]]
     # Correct total. Backend `total` reflects the UNFILTERED query and can be a
-    # phantom cap that ignores min_citations/min_year/source filters. When
-    # restrictive filters are active, report the actual returned count.
+    # phantom cap that ignores min_citations/min_year/source filters.
+    sort_mode = args.get("sort", "relevance")
     has_restrictive_filters = any(
         args.get(k) is not None
         for k in ("min_citations", "min_year", "max_year", "source", "doc_type", "author_name", "language")
@@ -735,8 +735,11 @@ async def _tool_search_papers(args: dict[str, Any]) -> dict:
     if not results:
         total = 0
     elif has_restrictive_filters:
+        # Filters narrow results below backend estimate — use actual count
         total = len(results)
     else:
+        # For both relevance and citation sort without filters, use backend total
+        # (EXPLAIN-estimated count of matching rows) when available.
         raw_total = data.get("total", len(papers))
         total = max(raw_total, len(results))
 
@@ -764,27 +767,32 @@ async def _tool_get_paper(args: dict[str, Any]) -> dict:
         try:
             search_data = await _get(
                 "/api/v1/papers/search",
-                {"query": result["title"], "limit": 1, "phase": "fast"},
+                {"query": result["title"], "limit": 3, "phase": "fast"},
             )
             search_papers = search_data.get("papers") or search_data.get("results") or []
-            if search_papers:
-                sp = search_papers[0]
-                # Verify title match to avoid enriching from wrong paper
-                sp_title = _norm_text(sp.get("title") or "")
-                r_title = _norm_text(result.get("title") or "")
-                if sp_title and r_title and sp_title[:40] == r_title[:40]:
-                    enriched_citations = _first_non_none(
-                        sp.get("citationCount"), sp.get("citation_count"),
-                        sp.get("cited_by_count"), sp.get("numCitations"),
-                    )
-                    # Always take the HIGHER citation count (freshest data wins)
-                    if enriched_citations and enriched_citations > result.get("citations", 0):
-                        result["citations"] = enriched_citations
-                    # Also enrich venue and references if missing
-                    if not result.get("venue"):
-                        result["venue"] = sp.get("venue") or sp.get("source") or (sp.get("journal") if isinstance(sp.get("journal"), str) else (sp.get("journal") or {}).get("name"))
-                    if not result.get("references_count"):
-                        result["references_count"] = sp.get("referenceCount") or sp.get("reference_count") or 0
+            r_title = _norm_text(result.get("title") or "")
+            # Find best matching paper from search results
+            sp = None
+            for candidate in search_papers:
+                sp_title = _norm_text(candidate.get("title") or "")
+                if sp_title and r_title and sp_title[:30] == r_title[:30]:
+                    sp = candidate
+                    break
+            if sp:
+                enriched_citations = _first_non_none(
+                    sp.get("citationCount"), sp.get("citation_count"),
+                    sp.get("cited_by_count"), sp.get("numCitations"),
+                )
+                # Always take the HIGHER citation count (freshest data wins)
+                if enriched_citations and enriched_citations > result.get("citations", 0):
+                    result["citations"] = enriched_citations
+                # Also enrich venue and references if missing
+                if not result.get("venue"):
+                    result["venue"] = sp.get("venue") or sp.get("source") or (sp.get("journal") if isinstance(sp.get("journal"), str) else (sp.get("journal") or {}).get("name"))
+                if not result.get("references_count"):
+                    result["references_count"] = _first_non_none(
+                        sp.get("referenceCount"), sp.get("reference_count"), sp.get("ref_count")
+                    ) or 0
         except Exception:
             pass  # Enrichment is best-effort
 
@@ -1305,7 +1313,9 @@ def _compact_paper(p: Any, include_full: bool = False) -> dict:
         "url": _build_url(p),
     }
     if include_full:
-        out["references_count"] = p.get("referenceCount") or p.get("reference_count") or 0
+        out["references_count"] = _first_non_none(
+            p.get("referenceCount"), p.get("reference_count"), p.get("ref_count")
+        ) or 0
         out["open_access"] = p.get("isOpenAccess", False)
         out["pdf_url"] = (p.get("openAccessPdf") or {}).get("url")
     return out
