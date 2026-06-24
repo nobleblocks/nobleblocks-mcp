@@ -48,7 +48,7 @@ MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rst
 NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8080"))
-SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.49")
+SERVER_VERSION = os.environ.get("MCP_VERSION", "2.0.51")
 
 HTTP_TIMEOUT = 30.0
 MAX_QUERY_LENGTH = 500
@@ -201,6 +201,18 @@ _GARBAGE_ENTITY_RE = re.compile(
     r"(\band\.$)"                      # Trailing "and."
 )
 
+# Editorial / affiliation boilerplate that the NER pipeline mistakenly extracts
+# as named entities from journal mastheads and PDF footers.
+_EDITORIAL_NOISE_RE = re.compile(
+    r"(editor[\s\-]?in[\s\-]?chief|"
+    r"guest\s+editor|associate\s+editor|managing\s+editor|deputy\s+editor|"
+    r"editorial\s+(board|advisory|office)|advisory\s+board|"
+    r"present\s+address|correspondence|corresponding\s+author|"
+    r"\be[\s\-]?mail\b|reprint|received\s+\d|accepted\s+\d|"
+    r"all\s+rights\s+reserved|copyright)",
+    re.IGNORECASE,
+)
+
 
 def _is_garbage_entity(name: str) -> bool:
     """True if the entity name looks like a PDF footer/address, not a real entity."""
@@ -214,6 +226,8 @@ def _is_garbage_entity(name: str) -> bool:
     if digits > len(name) * 0.5:
         return True
     if _GARBAGE_ENTITY_RE.search(name):
+        return True
+    if _EDITORIAL_NOISE_RE.search(name):
         return True
     return False
 
@@ -828,6 +842,11 @@ async def find_similar(query: str, limit: int = 10) -> str:
         )
         papers = data.get("papers") or data.get("results") or []
         papers = _filter_noise_sources(papers, query)
+        # Vector search may return an empty 200 when the HNSW index is unavailable
+        # (returns no error, just no rows). Treat empty as a miss and fall through
+        # to the text-search fallback so the user always gets results.
+        if not papers:
+            raise RuntimeError("vector search returned no results")
         result = {
             "query": query,
             "results": [_compact_paper(p) for p in papers],
@@ -835,13 +854,21 @@ async def find_similar(query: str, limit: int = 10) -> str:
         }
         return json.dumps(result, indent=2, default=str)
     except Exception:
-        # Fallback: use full search (not phase=fast) sorted by relevance for better quality
-        data = await _api_get(
-            "/api/v1/papers/search",
+        # Fallback: relevance-ranked text search. Try the full path first (best
+        # quality), then phase=fast (warm cache, avoids cold-cache 0-results).
+        papers = []
+        for params in (
             {"query": query, "limit": effective_limit, "sort": "relevance"},
-        )
-        papers = data.get("papers") or data.get("results") or []
-        papers = _filter_noise_sources(papers, query)
+            {"query": query, "limit": effective_limit, "sort": "relevance", "phase": "fast"},
+        ):
+            try:
+                data = await _api_get("/api/v1/papers/search", params)
+                papers = data.get("papers") or data.get("results") or []
+                papers = _filter_noise_sources(papers, query)
+                if papers:
+                    break
+            except Exception:
+                continue
         papers = _rerank_by_title_match(papers, query)
         result = {
             "query": query,
@@ -1161,13 +1188,59 @@ async def search_by_entity(
     # Deduplicate papers with identical DOIs (KG often has duplicate entries)
     papers = _deduplicate_papers(papers)
 
+    # Deduplicate entities by normalized name. The KG frequently returns the same
+    # person/concept more than once (e.g. "Atif Zaheer" listed twice).
+    deduped_entities = []
+    seen_entity_names: set[str] = set()
+    for ent in entities:
+        key = _norm_text(ent.get("name") or "")
+        if not key or key in seen_entity_names:
+            continue
+        seen_entity_names.add(key)
+        deduped_entities.append(ent)
+    entities = deduped_entities
+
+    # Surface the actual relationship edges, not just a count. Resolve each edge's
+    # source/target node ids (uid) to readable names so the connections are usable
+    # — previously only len(edges) was returned with no edge data, so a non-zero
+    # "relationships" count came back with nothing to show for it.
+    node_label: dict[str, str] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        uid = node.get("uid") or node.get("id")
+        if uid is None:
+            continue
+        label = _clean_entity_name(node.get("name") or node.get("title") or "")
+        if label:
+            node_label[str(uid)] = label
+
+    connections = []
+    seen_conn: set[tuple] = set()
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        src = node_label.get(str(edge.get("source")))
+        tgt = node_label.get(str(edge.get("target")))
+        if not src or not tgt or src == tgt:
+            continue
+        rel = edge.get("label") or edge.get("relation") or "related_to"
+        conn_key = (src, rel, tgt)
+        if conn_key in seen_conn:
+            continue
+        seen_conn.add(conn_key)
+        connections.append({"from": src, "relationship": rel, "to": tgt})
+        if len(connections) >= 25:
+            break
+
     result = {
         "query": query,
         "entities_found": len(entities),
         "papers_found": len(papers),
         "entities": entities[:20],
         "papers": papers[:20],
-        "relationships": len(edges),
+        "relationships": len(connections),
+        "connections": connections,
         "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — 1.3M+ entities, 109M+ links",
     }
     return json.dumps(result, indent=2, default=str)
@@ -1188,122 +1261,55 @@ async def search_grants(
 ) -> str:
     """Search for research grants and funding sources. Find which organizations
     fund research on a given topic, or discover what research a specific funder
-    (e.g. NIH, Gates Foundation, ERC, Wellcome Trust) has supported.
-    Returns funders, their funded papers, and award IDs."""
+    (e.g. NIH, NSF, Wellcome Trust, European Research Council, DFG) has supported.
+    Returns matched funders with funded-paper counts, plus a citation-ranked
+    sample of funded papers — each annotated with its award/grant ID."""
     query = sanitize_input(query, MAX_QUERY_LENGTH)
     if len(query) < 2:
         return json.dumps({"error": "Query must be at least 2 characters"})
 
     limit = max(1, min(limit, 50))
     try:
-        data = await _api_get("/api/v1/kg/explore", {"query": query, "max_nodes": limit, "entity_type": "funder"})
+        data = await _api_get("/api/v1/papers/grants", {"query": query, "limit": limit})
     except httpx.HTTPStatusError as e:
-        if e.response.status_code == 422:
-            # KG explore doesn't support this query format; fall back to paper search
-            try:
-                search_data = await _api_get(
-                    "/api/v1/papers/search",
-                    {"query": query, "limit": limit * 2, "phase": "fast", "sort": "relevance"},
-                )
-                papers = search_data.get("papers") or search_data.get("results") or []
-                papers = [p for p in papers if _has_strong_query_relevance(p, query)]
-                return json.dumps({
-                    "query": query,
-                    "note": "Grant-specific search returned papers related to your funding query. For specific funder data, try searching by funder name (e.g. 'NIH', 'ERC', 'Wellcome Trust').",
-                    "papers": [_compact_paper(p) for p in papers[:limit]],
-                    "total_found": len(papers),
-                    "attribution": "NobleBlocks (nobleblocks.com)",
-                }, indent=2, default=str)
-            except Exception:
-                pass
-            return json.dumps({
-                "error": "Grants search not available for this query. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
-                "query": query,
-            })
         return json.dumps({"error": f"Grants search failed (HTTP {e.response.status_code})"})
     except Exception as e:
         logger.warning("search_grants error: %s", e)
         return json.dumps({"error": "Grants search temporarily unavailable."})
 
-    nodes = data.get("nodes") or []
-    edges = data.get("edges") or []
+    funders = data.get("funders") or []
+    funded_papers = data.get("funded_papers") or []
+    mode = data.get("mode", "funder")
 
-    funders = []
-    funded_papers = []
-    funder_paper_links: dict[str, list[str]] = {}
-
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        if node.get("type") == "entity" and node.get("entityType") == "funder":
-            funder_info = {
-                "name": node.get("name"),
-                "country": (node.get("metadata") or {}).get("country", ""),
-                "description": node.get("description"),
-            }
-            funders.append(funder_info)
-            funder_paper_links[node.get("uid", "")] = []
-        elif node.get("type") == "paper":
-            funded_papers.append(_compact_paper(node))
-
-    # Map FUNDED edges
-    node_map = {n.get("uid"): n for n in nodes if isinstance(n, dict)}
-    for edge in edges:
-        if not isinstance(edge, dict):
-            continue
-        if edge.get("label") == "FUNDED":
-            src = edge.get("source", "")
-            tgt = edge.get("target", "")
-            paper_node = node_map.get(tgt) or node_map.get(src)
-            funder_uid = src if src in funder_paper_links else tgt
-            if funder_uid in funder_paper_links and paper_node:
-                title = paper_node.get("title") or paper_node.get("name", "")
-                if title:
-                    funder_paper_links[funder_uid].append(title)
-
-    for funder in funders:
-        uid_candidates = [n.get("uid") for n in nodes
-                          if isinstance(n, dict) and n.get("name") == funder["name"] and n.get("entityType") == "funder"]
-        if uid_candidates:
-            funder["funded_papers"] = funder_paper_links.get(uid_candidates[0], [])
-
-    if not funders:
-        # The knowledge graph has no funder entities yet, so any paper nodes it
-        # returned for this query are high-degree noise (unrelated to funding).
-        # Discard them and run a relevance-ranked search for the funding topic so
-        # the user gets papers actually related to their query.
-        relevant_papers = []
-        try:
-            # Search with the raw query (NOT appending "funding grant" which drowns
-            # specific topics like CRISPR in generic gene-therapy funding papers).
-            fallback_data = await _api_get(
-                "/api/v1/papers/search",
-                {"query": query, "limit": limit * 2, "phase": "fast", "sort": "relevance"},
-            )
-            fallback_papers = fallback_data.get("papers") or fallback_data.get("results") or []
-            # Use strict relevance filter: require majority of query words match
-            fallback_papers = [p for p in fallback_papers if _has_strong_query_relevance(p, query)]
-            relevant_papers = [_compact_paper(p) for p in fallback_papers[:limit]]
-        except Exception:
-            pass
-
-        result = {
+    if not funders and not funded_papers:
+        return json.dumps({
             "query": query,
             "funders_found": 0,
-            "papers_with_funding": len(relevant_papers),
-            "papers": relevant_papers[:limit],
-            "note": "No specific funder entities found in knowledge graph. Showing papers related to this funding query. Try a funder name (e.g. 'NIH', 'ERC', 'Gates Foundation').",
+            "note": (
+                "No funding records matched. Try a funder name (e.g. 'NIH', "
+                "'NSF', 'Wellcome Trust', 'ERC') or a research topic (e.g. 'CRISPR')."
+            ),
             "attribution": "NobleBlocks (nobleblocks.com)",
-        }
-        return json.dumps(result, indent=2, default=str)
+        }, indent=2, default=str)
+
+    compact_papers = []
+    for p in funded_papers[:limit]:
+        cp = _compact_paper(p)
+        if isinstance(cp, dict):
+            if p.get("award_id"):
+                cp["award_id"] = p["award_id"]
+            if p.get("funder"):
+                cp["funder"] = p["funder"]
+        compact_papers.append(cp)
 
     result = {
         "query": query,
+        "mode": mode,
         "funders_found": len(funders),
-        "funded_papers_found": len(funded_papers),
+        "funded_papers_found": len(compact_papers),
         "funders": funders[:limit],
-        "funded_papers": funded_papers[:limit],
-        "attribution": "NobleBlocks Knowledge Graph (nobleblocks.com) — Grants & Funding data",
+        "funded_papers": compact_papers,
+        "attribution": "NobleBlocks (nobleblocks.com) — Grants & Funding data via OpenAlex / EuropePMC",
     }
     return json.dumps(result, indent=2, default=str)
 
