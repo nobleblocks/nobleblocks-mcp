@@ -12,6 +12,14 @@ Usage:
   AWS_PROFILE=admin-delroy python3 scripts/deploy_mcp_ecs.py
   AWS_PROFILE=admin-delroy python3 scripts/deploy_mcp_ecs.py --skip-tests   # emergency hotfix
   AWS_PROFILE=admin-delroy python3 scripts/deploy_mcp_ecs.py --bump minor   # minor version bump
+
+Post-deploy search gate:
+  After the new version is confirmed live, a LIVE search gate
+  (scripts/search_gate_test.py) exercises the real backend search path across a
+  query-length matrix (2-letter → full natural language). If it detects a search
+  REGRESSION, the ECS service is automatically rolled back to the previous
+  task-definition revision and the version-bump commit is skipped. Use
+  --skip-search-gate for genuine emergencies only.
 """
 
 import subprocess
@@ -40,6 +48,7 @@ MCP_DIR = Path(__file__).resolve().parent.parent
 PYPROJECT = MCP_DIR / "pyproject.toml"
 SERVER_JSON = MCP_DIR / "server.json"
 REGRESSION_SCRIPT = MCP_DIR / "scripts" / "regression_test.py"
+SEARCH_GATE_SCRIPT = MCP_DIR / "scripts" / "search_gate_test.py"
 
 
 def run(cmd, check=True, cwd=None):
@@ -131,6 +140,32 @@ def verify_deployment(expected_version: str, max_wait: int = 120) -> bool:
     return False
 
 
+def run_search_gate() -> bool:
+    """Run the LIVE search gate against prod. Returns True if no regression."""
+    print("\n[7/7] Running LIVE search gate (prod)...")
+    result = run(f"python3 {SEARCH_GATE_SCRIPT} --prod", check=False, cwd=str(MCP_DIR))
+    if result.returncode != 0:
+        print("\n  ✗ SEARCH GATE FAILED — a search regression is live.")
+        return False
+    print("  ✓ Search gate passed — no regression detected")
+    return True
+
+
+def rollback_service(prev_td_arn: str) -> None:
+    """Roll the ECS service back to the previous task-definition revision."""
+    if not prev_td_arn:
+        print("  ⚠ No previous task-definition captured — cannot auto-rollback.")
+        print("    Roll back manually via the ECS console.")
+        return
+    print(f"\n  ↻ ROLLING BACK service to {prev_td_arn} ...")
+    run(
+        f"aws ecs update-service --cluster {CLUSTER} --service {SERVICE_NAME} "
+        f"--task-definition {prev_td_arn} --force-new-deployment --region {REGION}",
+        check=False,
+    )
+    print("  ↻ Rollback initiated — previous revision redeploying.")
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Deploy NobleBlocks MCP to ECS")
@@ -138,6 +173,8 @@ def main():
     parser.add_argument("--bump", choices=["patch", "minor", "major"], default="patch",
                         help="Version bump type (default: patch)")
     parser.add_argument("--no-verify", action="store_true", help="Skip post-deploy verification")
+    parser.add_argument("--skip-search-gate", action="store_true",
+                        help="Skip the post-deploy live search gate (emergency only)")
     args = parser.parse_args()
 
     # Step 0: Regression tests (unless skipped)
@@ -244,10 +281,14 @@ def main():
         check=False,
     )
 
+    prev_td_arn = ""  # captured BEFORE update so we can auto-rollback
     if result.returncode == 0:
         services = json.loads(result.stdout).get("services", [])
         active = [s for s in services if s.get("status") == "ACTIVE"]
         if active:
+            prev_td_arn = active[0].get("taskDefinition", "")
+            if prev_td_arn:
+                print(f"  Previous task-def (rollback target): {prev_td_arn}")
             run(
                 f"aws ecs update-service --cluster {CLUSTER} --service {SERVICE_NAME} "
                 f"--task-definition {td_arn} --force-new-deployment --region {REGION}"
@@ -266,6 +307,19 @@ def main():
             print("  ⚠ Deployment may still be rolling out. Check ECS console.")
     else:
         print("\n[6/6] Verification skipped (--no-verify)")
+
+    # Step 6: Post-deploy LIVE search gate with auto-rollback.
+    if not args.skip_search_gate:
+        if not run_search_gate():
+            rollback_service(prev_td_arn)
+            print("\n" + "=" * 60)
+            print("  ✗ DEPLOY BLOCKED — search regression detected.")
+            print(f"  Rolled back to: {prev_td_arn or '(manual rollback required)'}")
+            print("  Version bump NOT committed. Fix search before retrying.")
+            print("=" * 60 + "\n")
+            sys.exit(1)
+    else:
+        print("\n  ⚠ Live search gate SKIPPED (--skip-search-gate)")
 
     # Git commit the version bump
     print("\n  Committing version bump...")
