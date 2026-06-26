@@ -82,6 +82,23 @@ SEARCH_TESTS = [
     ("Very specific: CRISPR Cas9 base editing sickle cell", {"query": "CRISPR Cas9 base editing sickle cell", "phase": "fast", "limit": "10"}, 1, 30),
     ("Niche: perovskite solar cells", {"query": "perovskite solar cells", "phase": "fast", "limit": "10"}, 3, 30),
     ("Broad + strict filter: AI + min_year=2024 + min_citations=100", {"query": "artificial intelligence", "phase": "fast", "limit": "20", "min_year": "2024", "min_citations": "100"}, 0, 30),  # Too new for 100 cites
+
+    # === Long natural-language / conversational queries (CRITICAL) ===
+    # NobleBlocks is primarily a natural-language research search. Users type full
+    # questions, not keywords. These full sentences MUST return relevant results.
+    # The keyword sections above do NOT exercise the NL path — keep this section.
+    ("NL: intermittent fasting + insulin sensitivity", {"query": "what are the long term effects of intermittent fasting on insulin sensitivity", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: CRISPR + sickle cell", {"query": "how does CRISPR gene editing treat sickle cell disease", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: exercise + alzheimer risk", {"query": "does regular exercise reduce the risk of alzheimer's disease in older adults", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: gut microbiome + depression", {"query": "what is the relationship between the gut microbiome and depression", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: mindfulness + anxiety", {"query": "can mindfulness meditation help reduce symptoms of anxiety", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: microplastics + human health", {"query": "what are the effects of microplastics on human health", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: GLP-1 + weight loss", {"query": "how effective are GLP-1 receptor agonists for weight loss in patients with obesity", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: mRNA vaccines + variants", {"query": "how effective are mRNA vaccines against new covid variants", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: mediterranean diet + cardiovascular", {"query": "what are the cardiovascular benefits of following a mediterranean diet", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: air pollution + neurodegeneration", {"query": "does long term exposure to air pollution increase the risk of neurodegenerative diseases", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: machine learning + sepsis prediction", {"query": "can machine learning models predict sepsis earlier in intensive care patients", "phase": "fast", "limit": "20"}, 3, 30),
+    ("NL: telemedicine + chronic disease", {"query": "is telemedicine effective for managing chronic diseases in rural populations", "phase": "fast", "limit": "20"}, 3, 30),
 ]
 
 
