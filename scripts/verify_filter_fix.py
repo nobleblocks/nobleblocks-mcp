@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Quick filter verification test for the dev deployment."""
+import os
+
 import httpx
 
 URL = "https://www.dev.nobleblocks.com/api/v1/papers/search"
-HEADERS = {"X-Internal-Token": "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu"}
+HEADERS = {"X-Internal-Token": os.environ.get("NB_INTERNAL_TOKEN", "")}
 
 def test_filter(label, params, check_fn):
     r = httpx.get(URL, params=params, headers=HEADERS, timeout=35)

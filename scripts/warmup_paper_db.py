@@ -14,6 +14,7 @@ Or on Paper DB EC2 startup:
 """
 
 import asyncio
+import os
 import time
 import httpx
 
@@ -21,7 +22,7 @@ import httpx
 PAPER_DB_URL = "http://localhost:8000"
 # Fallback: use prod frontend
 FRONTEND_URL = "https://www.nobleblocks.com"
-INTERNAL_TOKEN = "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu"
+INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 
 # Top academic search terms — covers ~80% of search traffic patterns
 WARMUP_QUERIES = [
