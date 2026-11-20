@@ -49,10 +49,7 @@ import urllib.request
 
 # Internal token bypasses auth for direct backend testing. Already present
 # throughout this repo's test scripts and in the deploy container env.
-INTERNAL_TOKEN = os.environ.get(
-    "NB_INTERNAL_TOKEN",
-    "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu",
-)
+INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 
 DEV_URL = "https://www.dev.nobleblocks.com/api/v1/papers/search"
 PROD_URL = "https://www.nobleblocks.com/api/v1/papers/search"

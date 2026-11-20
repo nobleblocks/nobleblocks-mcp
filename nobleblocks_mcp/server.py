@@ -56,7 +56,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr
 # ─── Configuration ─────────────────────────────────────────────────────────────
 API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 API_KEY = os.environ.get("NOBLEBLOCKS_API_KEY", "")
-NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu")
+NB_INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 LOCAL_VERSION = "2.0.32"
 USER_AGENT = f"nobleblocks-mcp/{LOCAL_VERSION}"
 HTTP_TIMEOUT = 30.0
