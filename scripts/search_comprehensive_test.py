@@ -34,13 +34,14 @@ Usage:
 """
 
 import sys
+import os
 import json
 import time
 import argparse
 import urllib.request
 import urllib.parse
 
-INTERNAL_TOKEN = "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu"
+INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 
 DEV_URL = "https://www.dev.nobleblocks.com/api/v1/papers/search"
 PROD_URL = "https://www.nobleblocks.com/api/v1/papers/search"
