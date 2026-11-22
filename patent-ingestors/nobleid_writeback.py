@@ -21,7 +21,7 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "paper_search")
 DB_USER = os.getenv("DB_USER", "nobleblocks")
-DB_PASS = os.getenv("DB_PASS", "nb_papers_2026_prod")
+DB_PASS = os.getenv("DB_PASS", "")
 
 BATCH_SIZE = 50_000  # rows per batch
 PROGRESS_INTERVAL = 10  # log every N batches

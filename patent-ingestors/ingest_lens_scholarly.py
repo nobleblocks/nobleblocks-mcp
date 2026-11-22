@@ -15,7 +15,7 @@ This ingestor focuses on:
 3. DOI-linked citations that map to our papers table
 
 Deploy:
-  DB_PASS=nb_papers_2026_prod LENS_API_KEY=<key> python3 ingest_lens_scholarly.py [--since YYYY-MM-DD] [--limit N]
+  DB_PASS=<db-password> LENS_API_KEY=<key> python3 ingest_lens_scholarly.py [--since YYYY-MM-DD] [--limit N]
 """
 
 import requests
