@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
+import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode
@@ -42,6 +43,18 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
 logger = logging.getLogger("nobleblocks-mcp.oauth")
 
+
+def _tok_id(token: str | None) -> str:
+    """Return a short, non-reversible id for a token, safe for logs.
+
+    Never log raw token material (even truncated) — a SHA-256 prefix lets us
+    correlate log lines without exposing any usable part of the credential.
+    """
+    if not token:
+        return "none"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
 # ─── Configuration ─────────────────────────────────────────────────────────────
 NB_API_BASE = os.environ.get("NOBLEBLOCKS_API_BASE", "https://www.nobleblocks.com").rstrip("/")
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.nobleblocks.com").rstrip("/")
@@ -63,18 +76,25 @@ class NobleBlocksOAuthProvider(
     """OAuth 2.1 provider that authenticates against NobleBlocks user accounts."""
 
     def __init__(self):
-        # Persistent store (DynamoDB) — survives restarts and works multi-instance.
-        # Falls back to in-memory dicts if DynamoDB is unavailable (local dev).
+        # Persistent store — try SQLite (DO/single-server), then DynamoDB (AWS/ECS),
+        # then fall back to in-memory dicts (local dev).
         self._use_dynamo = False
         self._store = None
         try:
-            from .dynamo_store import DynamoTokenStore, ensure_table_exists
-            ensure_table_exists()
-            self._store = DynamoTokenStore()
-            self._use_dynamo = True
-            logger.info("OAuth token store: DynamoDB")
+            from .sqlite_store import SqliteTokenStore
+            self._store = SqliteTokenStore()
+            self._use_dynamo = True  # reuses the same code paths
+            logger.info("OAuth token store: SQLite")
         except Exception as e:
-            logger.warning("DynamoDB unavailable, falling back to in-memory: %s", e)
+            logger.info("SQLite unavailable (%s), trying DynamoDB...", e)
+            try:
+                from .dynamo_store import DynamoTokenStore, ensure_table_exists
+                ensure_table_exists()
+                self._store = DynamoTokenStore()
+                self._use_dynamo = True
+                logger.info("OAuth token store: DynamoDB")
+            except Exception as e2:
+                logger.warning("DynamoDB unavailable, falling back to in-memory: %s", e2)
 
         # In-memory fallback (used if DynamoDB is unavailable)
         self._auth_codes: dict[str, AuthorizationCode] = {}
@@ -156,7 +176,7 @@ class NobleBlocksOAuthProvider(
         if self._use_dynamo:
             data = self._store.get("access_token", token_str)
             if not data:
-                logger.warning("_load_access_token: DynamoDB returned None for token=%.12s...", token_str)
+                logger.warning("_load_access_token: DynamoDB returned None for token=%s", _tok_id(token_str))
             if data:
                 from datetime import datetime
                 expires_raw = data["expires_at"]
@@ -533,17 +553,17 @@ class NobleBlocksOAuthProvider(
         in_memory = token in self._access_tokens
         at = self._load_access_token(token)
         if at and at.expires_at > time.time():
-            logger.info("load_access_token: FOUND token=%.12s... memory=%s expires_in=%.0fs",
-                        token, in_memory, at.expires_at - time.time())
+            logger.info("load_access_token: FOUND token=%s memory=%s expires_in=%.0fs",
+                        _tok_id(token), in_memory, at.expires_at - time.time())
             return at
         if at:
-            logger.warning("load_access_token: EXPIRED token=%.12s... expires_at=%s now=%s",
-                           token, at.expires_at, time.time())
+            logger.warning("load_access_token: EXPIRED token=%s expires_at=%s now=%s",
+                           _tok_id(token), at.expires_at, time.time())
             self._delete_access_token(token)
             self._delete_nb_token_mapping("token", token)
         else:
-            logger.warning("load_access_token: NOT FOUND token=%.12s... memory=%s dynamo=%s",
-                           token, in_memory, self._use_dynamo)
+            logger.warning("load_access_token: NOT FOUND token=%s memory=%s dynamo=%s",
+                           _tok_id(token), in_memory, self._use_dynamo)
         return None
 
     # ── Revocation ───────────────────────────────────────────────────────────
