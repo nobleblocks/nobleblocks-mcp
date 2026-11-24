@@ -29,6 +29,7 @@ Monitor:
 """
 
 import sys
+import os
 import time
 import psycopg2
 
@@ -37,7 +38,7 @@ DB_PARAMS = {
     "port": 5432,
     "dbname": "paper_search",
     "user": "nobleblocks",
-    "password": "nb_papers_2026_prod",
+    "password": os.environ.get("DB_PASS") or os.environ.get("PGPASSWORD", ""),
     "connect_timeout": 10,
 }
 
