@@ -60,6 +60,20 @@ def run(cmd, check=True, cwd=None):
     return result
 
 
+def _require_env(name):
+    """Read a required secret from the environment, failing loudly if unset.
+
+    Secrets must NOT be hardcoded in source. Export before deploying, e.g.:
+      export NB_INTERNAL_TOKEN=...   (must match the frontend INTERNAL_SERVICE_TOKEN)
+    """
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(f"  ERROR: required env var {name} is not set.")
+        print(f"  Export it before deploying (must match the frontend INTERNAL_SERVICE_TOKEN).")
+        sys.exit(1)
+    return val
+
+
 def get_version() -> str:
     """Read version from pyproject.toml."""
     text = PYPROJECT.read_text()
@@ -193,7 +207,7 @@ def main():
     container_env = {
         "NOBLEBLOCKS_API_BASE": "https://www.nobleblocks.com",
         "MCP_BASE_URL": "https://mcp.nobleblocks.com",
-        "NB_INTERNAL_TOKEN": "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu",
+        "NB_INTERNAL_TOKEN": _require_env("NB_INTERNAL_TOKEN"),
         "MCP_HOST": "0.0.0.0",
         "MCP_PORT": "8080",
         "MCP_VERSION": new_version,

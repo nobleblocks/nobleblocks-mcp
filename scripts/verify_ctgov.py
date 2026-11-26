@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Verify ClinicalTrials.gov results appear in phase=fast (MCP) searches."""
+import os
+
 import httpx
 
 URL = "https://www.dev.nobleblocks.com/api/v1/papers/search"
-HEADERS = {"X-Internal-Token": "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu"}
+HEADERS = {"X-Internal-Token": os.environ.get("NB_INTERNAL_TOKEN", "")}
 
 queries = [
     "Alzheimer disease clinical trial",
