@@ -7,10 +7,11 @@ Tests against prod after Paper DB + frontend deploy.
 import sys
 import json
 import time
+import os
 import urllib.request
 import urllib.parse
 
-INTERNAL_TOKEN = "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu"
+INTERNAL_TOKEN = os.environ.get("NB_INTERNAL_TOKEN", "")
 PROD_URL = "https://www.nobleblocks.com/api/v1/papers/search"
 DEV_URL = "https://www.dev.nobleblocks.com/api/v1/papers/search"
 

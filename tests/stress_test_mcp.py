@@ -5,6 +5,7 @@ Tests search, similar, lookup, citation-graph, and KG explore.
 Reports failures, latency, and edge cases.
 """
 import asyncio
+import os
 import httpx
 import json
 import time
@@ -16,7 +17,7 @@ API_BASE = "https://www.nobleblocks.com"
 HEADERS = {
     "User-Agent": "nobleblocks-mcp/2.0.0",
     "Accept": "application/json",
-    "x-internal-token": "6vdNeoQJ0Dbi2-NDhRiNljKZoKCzxxg2vxI-i1oy7u56mdr_YP6K1H9RDu1amXLu",
+    "x-internal-token": os.environ.get("NB_INTERNAL_TOKEN", ""),
 }
 TIMEOUT = 30.0
 MAX_CONCURRENT = 5  # Don't overwhelm prod
