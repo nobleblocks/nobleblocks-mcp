@@ -19,7 +19,7 @@ Deploy:
   2. Enable systemd timer: systemctl enable --now patent-refresh.timer
 
 Run manually:
-  DB_PASS=nb_papers_2026_prod python3 patent_refresh_orchestrator.py [--source NAME] [--force]
+  DB_PASS=<db-password> python3 patent_refresh_orchestrator.py [--source NAME] [--force]
 """
 
 import argparse
